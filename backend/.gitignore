@@ -1,0 +1,7 @@
+/target
+/data
+.env
+
+# SQLite database and its WAL sidecar files, wherever DATA_DIR points.
+*.db
+*.db-*

@@ -1,0 +1,9 @@
+target
+data
+**/*.db
+**/*.db-*
+.env
+.git
+.gitignore
+Dockerfile
+.dockerignore

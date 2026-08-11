@@ -1,0 +1,32 @@
+services:
+  backend:
+    build: ./backend
+    image: ghcr.io/${IMAGE_OWNER:-pfp}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      RUST_LOG: backend=info,tower_http=info
+    volumes:
+      - backend-data:/app/data
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build: ./frontend
+    image: ghcr.io/${IMAGE_OWNER:-pfp}/frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - path: ./frontend/.env
+        required: false
+    environment:
+      # Overrides .env: reach the backend over the compose network.
+      BACKEND_URL: http://backend:8080
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  backend-data:
