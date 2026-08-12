@@ -1,19 +1,10 @@
 import type { NextConfig } from "next";
 
-// Where the frontend proxies /api requests. Override in Docker/production via
-// the BACKEND_URL environment variable (e.g. http://backend:8080).
-const backendUrl = process.env.BACKEND_URL ?? "http://localhost:8080";
-
+// /api/* is proxied to the backend at runtime by src/app/api/[...path]/route.ts,
+// which reads BACKEND_URL per request. A next.config rewrite can't be used
+// because its destination is baked at build time.
 const nextConfig: NextConfig = {
   output: "standalone",
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${backendUrl}/api/:path*`,
-      },
-    ];
-  },
 };
 
 export default nextConfig;

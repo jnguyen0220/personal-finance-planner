@@ -14,18 +14,14 @@ services:
       - "8080:8080"
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        # Baked into the Next.js build; rewrites resolve this at build time.
-        BACKEND_URL: http://backend:8080
+    build: ./frontend
     image: ghcr.io/${IMAGE_OWNER:-pfp}/frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - path: ./frontend/.env
         required: false
     environment:
-      # Overrides .env: reach the backend over the compose network.
+      # Reach the backend over the compose network; read at runtime by the proxy.
       BACKEND_URL: http://backend:8080
     depends_on:
       - backend

@@ -12,10 +12,6 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-# Next.js bakes rewrite destinations into the build, so BACKEND_URL must be
-# present at build time, not just at runtime.
-ARG BACKEND_URL
-ENV BACKEND_URL=${BACKEND_URL}
 RUN npm run build
 
 # ---- Runtime ----
