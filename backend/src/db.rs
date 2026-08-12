@@ -127,6 +127,20 @@ CREATE TABLE IF NOT EXISTS providers (
     created_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS states (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    name       TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    fields     TEXT NOT NULL,
+    rentals    INTEGER NOT NULL,
+    personal   INTEGER NOT NULL,
+    deductible INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_transactions_property ON transactions(property_id);
 CREATE INDEX IF NOT EXISTS idx_tenants_property ON tenants(property_id);
 CREATE INDEX IF NOT EXISTS idx_leases_tenant ON leases(tenant_id);
@@ -153,7 +167,36 @@ pub async fn init_pool(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
 
     sqlx::raw_sql(SCHEMA).execute(&pool).await?;
     migrate(&pool).await?;
+    seed_reference_data(&pool).await?;
     Ok(pool)
+}
+
+/// Populates the `states` and `categories` reference tables from the canonical
+/// Rust definitions. Runs on every startup but only inserts rows that are
+/// missing, so a fresh database is fully populated and existing data is kept.
+async fn seed_reference_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for state in crate::states::STATES {
+        sqlx::query("INSERT OR IGNORE INTO states (code, name) VALUES (?, ?)")
+            .bind(state.code)
+            .bind(state.name)
+            .execute(pool)
+            .await?;
+    }
+    for category in crate::categories::CATEGORIES {
+        sqlx::query(
+            "INSERT OR IGNORE INTO categories (name, kind, fields, rentals, personal, deductible) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(category.name)
+        .bind(category.kind)
+        .bind(category.fields.join(","))
+        .bind(category.rentals as i64)
+        .bind(category.personal as i64)
+        .bind(category.deductible as i64)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Applies additive migrations for databases created before a column existed.
