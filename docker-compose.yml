@@ -14,7 +14,11 @@ services:
       - "8080:8080"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Baked into the Next.js build; rewrites resolve this at build time.
+        BACKEND_URL: http://backend:8080
     image: ghcr.io/${IMAGE_OWNER:-pfp}/frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
