@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, formatCurrency, formatDayOfMonth, tenantName, type Lease, type Tenant } from "@/lib/api";
+import { api, formatCurrency, formatDayOfMonth, formatPhoneInput, tenantName, type Lease, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { Switch } from "@/components/ui/Switch";
@@ -20,7 +20,7 @@ export function TenantEditForm({
   const [firstName, setFirstName] = useState(tenant.first_name);
   const [lastName, setLastName] = useState(tenant.last_name);
   const [email, setEmail] = useState(tenant.email);
-  const [phone, setPhone] = useState(tenant.phone);
+  const [phone, setPhone] = useState(formatPhoneInput(tenant.phone));
   const [isCurrent, setIsCurrent] = useState(tenant.is_current);
   const [notes, setNotes] = useState(tenant.notes);
   const [licenseId, setLicenseId] = useState(tenant.driver_license_id);
@@ -118,7 +118,7 @@ export function TenantEditForm({
                 <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
               </Field>
               <Field label="Phone">
-                <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                <input className="input" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} />
               </Field>
               <Field label="Current tenant">
                 <label className="flex h-[38px] cursor-pointer items-center gap-3">

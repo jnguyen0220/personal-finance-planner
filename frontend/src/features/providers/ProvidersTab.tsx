@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, formatPhone, type ProviderInput, type Tenant } from "@/lib/api";
+import { api, formatPhone, formatPhoneInput, type ProviderInput, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { DeleteButton } from "@/components/ui/DeleteButton";
 
@@ -94,7 +94,7 @@ export function ProvidersTab({
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
           </Field>
           <Field label="Phone">
-            <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input className="input" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} />
           </Field>
           <Field label="Homepage">
             <input

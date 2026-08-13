@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, statesQueryOptions, type Property, type PropertyKind } from "@/lib/api";
+import { api, formatPhoneInput, statesQueryOptions, type Property, type PropertyKind } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { Switch } from "@/components/ui/Switch";
 import { Modal } from "@/components/ui/Modal";
@@ -25,7 +25,7 @@ export function PropertyEditForm({
   const [purchaseDate, setPurchaseDate] = useState(property.purchase_date ?? "");
   const [notes, setNotes] = useState(property.notes);
   const [hoaName, setHoaName] = useState(property.hoa_name);
-  const [hoaPhone, setHoaPhone] = useState(property.hoa_phone);
+  const [hoaPhone, setHoaPhone] = useState(formatPhoneInput(property.hoa_phone));
   const [hoaEmail, setHoaEmail] = useState(property.hoa_email);
   const [hoaWebpage, setHoaWebpage] = useState(property.hoa_webpage);
   const [remindersEnabled, setRemindersEnabled] = useState(property.reminders_enabled);
@@ -146,7 +146,7 @@ export function PropertyEditForm({
             <input className="input" value={hoaName} onChange={(e) => setHoaName(e.target.value)} />
           </Field>
           <Field label="HOA phone">
-            <input className="input" value={hoaPhone} onChange={(e) => setHoaPhone(e.target.value)} />
+            <input className="input" value={hoaPhone} onChange={(e) => setHoaPhone(formatPhoneInput(e.target.value))} />
           </Field>
           <Field label="HOA email">
             <input className="input" value={hoaEmail} onChange={(e) => setHoaEmail(e.target.value)} />

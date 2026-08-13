@@ -551,15 +551,34 @@ export function formatCurrency(value: number): string {
   }).format(value);
 }
 
-/// Format a US phone number as "(123) 456-7890", preserving any extra input
-/// (like a leading "+1" or an extension) that doesn't fit the 10-digit pattern.
+/// Format a US phone number as "(123) 456-7890". A country-code prefix is kept
+/// as a leading "+<code> " and any leftover digits (e.g. an extension) are
+/// appended, so every value renders with a consistent "(area) " grouping.
 export function formatPhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
-  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-  if (local.length === 10) {
-    return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`;
+  if (digits.length < 10) {
+    return phone;
   }
-  return phone;
+  const extra = digits.length > 10 ? digits.slice(0, digits.length - 10) : "";
+  const local = digits.slice(digits.length - 10);
+  const formatted = `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`;
+  return extra ? `+${extra} ${formatted}` : formatted;
+}
+
+/// Progressively format phone input as the user types, e.g. "(123) 456-7890".
+/// Only formats up to 10 digits; anything longer is returned as raw digits.
+export function formatPhoneInput(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length > 10) {
+    return value;
+  }
+  if (digits.length < 4) {
+    return digits;
+  }
+  if (digits.length < 7) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  }
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
 /// Single source of truth for a property's display address: "street, city, ST zip".

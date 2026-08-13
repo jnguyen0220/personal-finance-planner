@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, formatCurrency, formatPhone, latestLease, tenantName, type OutstandingBalance, type Tenant } from "@/lib/api";
+import { api, formatCurrency, formatPhone, formatPhoneInput, latestLease, tenantName, type OutstandingBalance, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { Switch } from "@/components/ui/Switch";
 import { DeleteButton } from "@/components/ui/DeleteButton";
@@ -77,7 +77,7 @@ export function TenantsTab({
             <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
           <Field label="Phone">
-            <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input className="input" value={phone} onChange={(e) => setPhone(formatPhoneInput(e.target.value))} />
           </Field>
           <label className="flex items-center gap-2 pb-2 text-sm">
             <Switch checked={isCurrent} onChange={setIsCurrent} />
