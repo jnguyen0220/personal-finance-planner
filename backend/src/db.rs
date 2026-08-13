@@ -159,7 +159,11 @@ CREATE TABLE IF NOT EXISTS contact_reminders (
     dedup_key  TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+"#;
 
+// Created after migrations so indexes never reference a column an older
+// database has yet to gain (e.g. transactions.category_id).
+const INDEXES: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_transactions_property ON transactions(property_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
 CREATE INDEX IF NOT EXISTS idx_tenants_property ON tenants(property_id);
@@ -187,6 +191,7 @@ pub async fn init_pool(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
 
     sqlx::raw_sql(SCHEMA).execute(&pool).await?;
     migrate(&pool).await?;
+    sqlx::raw_sql(INDEXES).execute(&pool).await?;
     seed_reference_data(&pool).await?;
     Ok(pool)
 }
@@ -369,6 +374,24 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         "ALTER TABLE transactions ADD COLUMN borne_by TEXT NOT NULL DEFAULT 'landlord'",
     )
     .await?;
+    // The free-text `category` column became a foreign key into `categories`.
+    // Add the new column and map legacy values onto matching category ids,
+    // defaulting anything unknown to `other`.
+    if !column_exists(pool, "transactions", "category_id").await? {
+        sqlx::query(
+            "ALTER TABLE transactions ADD COLUMN category_id TEXT NOT NULL DEFAULT 'other'",
+        )
+        .execute(pool)
+        .await?;
+        if column_exists(pool, "transactions", "category").await? {
+            sqlx::query(
+                "UPDATE transactions SET category_id = \
+                    CASE WHEN category IN (SELECT id FROM categories) THEN category ELSE 'other' END",
+            )
+            .execute(pool)
+            .await?;
+        }
+    }
     add_column_if_missing(
         pool,
         "leases",
