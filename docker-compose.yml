@@ -9,7 +9,7 @@ services:
     environment:
       RUST_LOG: backend=info,tower_http=info
     volumes:
-      - backend-data:/app/data
+      - ./backend/data:/app/data
     ports:
       - "8080:8080"
 
@@ -27,6 +27,3 @@ services:
       - backend
     ports:
       - "3000:3000"
-
-volumes:
-  backend-data:
