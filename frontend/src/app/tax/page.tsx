@@ -7,6 +7,7 @@ import {
   api,
   formatCurrency,
   formatPropertyAddress,
+  yearsQueryOptions,
   type TaxCategoryTotal,
   type TaxPropertyReport,
   type TaxReport,
@@ -55,10 +56,12 @@ export default function TaxReportPage() {
     queryFn: () => api.taxReport(year),
   });
 
+  const { data: activeYears = [] } = useQuery(yearsQueryOptions);
+
   const yearOptions = useMemo(() => {
-    const current = new Date().getFullYear();
-    return Array.from({ length: 7 }, (_, i) => current - i);
-  }, []);
+    const set = new Set<number>([new Date().getFullYear() - 1, new Date().getFullYear(), ...activeYears]);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [activeYears]);
 
   const properties = data?.properties ?? [];
 

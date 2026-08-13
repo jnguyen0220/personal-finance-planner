@@ -214,6 +214,24 @@ pub(crate) async fn outstanding_for(
     Ok(compute_outstanding(&spans, &paid_by_year, selected_year))
 }
 
+/// Calendar years with recorded transaction activity, newest first. Drives the
+/// year filters so only years backed by real data are offered. The current year
+/// is always included so a fresh dataset still has a sensible default.
+pub async fn years(State(st): State<AppState>) -> AppResult<Json<Vec<i32>>> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT substr(date, 1, 4) AS y FROM transactions WHERE length(date) >= 4",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+
+    let mut years: Vec<i32> = rows.into_iter().filter_map(|y| y.parse().ok()).collect();
+    if !years.contains(&current_year()) {
+        years.push(current_year());
+    }
+    years.sort_unstable_by(|a, b| b.cmp(a));
+    Ok(Json(years))
+}
+
 /// Portfolio rollup in one round-trip: every property with its year summary and
 /// rent owed, plus per-kind totals for the header cards.
 pub async fn overview(

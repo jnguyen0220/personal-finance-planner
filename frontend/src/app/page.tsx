@@ -8,6 +8,7 @@ import {
   formatCurrency,
   formatPropertyAddress,
   statesQueryOptions,
+  yearsQueryOptions,
   type OverviewRow,
   type PortfolioTotals,
   type PropertyKind,
@@ -43,10 +44,11 @@ export default function Home() {
 
   const { data: states = [] } = useQuery(statesQueryOptions);
 
+  const { data: activeYears = [] } = useQuery(yearsQueryOptions);
   const yearOptions = useMemo(() => {
-    const current = new Date().getFullYear();
-    return Array.from({ length: 6 }, (_, i) => current - i);
-  }, []);
+    const set = new Set<number>([new Date().getFullYear(), ...activeYears]);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [activeYears]);
 
   async function addProperty(e: React.FormEvent) {
     e.preventDefault();

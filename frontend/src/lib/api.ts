@@ -417,6 +417,7 @@ function yearQuery(year?: number | "all"): string {
 export const api = {
   overview: (year?: number | "all") =>
     request<OverviewResponse>(`/overview${yearQuery(year)}`),
+  years: () => request<number[]>("/years"),
   taxReport: (year?: number | "all") =>
     request<TaxReport>(`/tax-report${yearQuery(year)}`),
   getProperty: (id: string) => request<Property>(`/properties/${id}`),
@@ -583,6 +584,13 @@ export const statesQueryOptions = {
   queryFn: api.states,
   staleTime: Infinity,
   gcTime: Infinity,
+};
+
+// Years with transaction activity, for the data-driven year filters. Merged
+// with the current year at the call site so a default is always available.
+export const yearsQueryOptions = {
+  queryKey: ["years"] as const,
+  queryFn: api.years,
 };
 
 export function categoriesQueryOptions(kind: PropertyKind) {

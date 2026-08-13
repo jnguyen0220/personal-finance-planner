@@ -79,6 +79,7 @@ async fn main() {
         )
         .route("/api/properties", post(handlers::properties::create))
         .route("/api/overview", get(handlers::properties::overview))
+        .route("/api/years", get(handlers::properties::years))
         .route("/api/tax-report", get(handlers::properties::tax_report))
         .route(
             "/api/properties/:id",
