@@ -60,7 +60,8 @@ export interface LeaseInput {
 export interface Tenant {
   id: string;
   property_id: string;
-  name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   phone: string;
   is_current: boolean;
@@ -72,8 +73,14 @@ export interface Tenant {
   active_lease: Lease | null;
 }
 
+/// Full display name for a tenant, tolerant of a missing last name.
+export function tenantName(t: Pick<Tenant, "first_name" | "last_name">): string {
+  return `${t.first_name} ${t.last_name}`.trim();
+}
+
 export interface TenantInput {
-  name: string;
+  first_name: string;
+  last_name?: string;
   email?: string;
   phone?: string;
   is_current?: boolean;

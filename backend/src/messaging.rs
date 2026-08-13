@@ -88,7 +88,7 @@ struct TenantRow {
 /// per calendar month (the `dedup_key` carries the year-month).
 async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error> {
     let rows = sqlx::query_as::<_, TenantRow>(
-        "SELECT t.id, t.name, t.phone, t.property_id, p.name AS property_name \
+        "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, t.property_id, p.name AS property_name \
          FROM tenants t JOIN properties p ON p.id = t.property_id \
          WHERE t.is_current = 1 AND t.notifications_enabled = 1 AND p.kind = 'rental' AND t.phone <> '' \
          ORDER BY t.created_at",
@@ -149,7 +149,7 @@ struct LeaseRow {
 /// window, once per lease.
 async fn lease_expiring_messages(pool: &SqlitePool) -> Result<Vec<Pending>, sqlx::Error> {
     let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, t.name AS tenant_name, t.phone, t.property_id, p.name AS property_name, l.end_date, l.notify_days \
+        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.name AS property_name, l.end_date, l.notify_days \
          FROM leases l \
          JOIN tenants t ON t.id = l.tenant_id \
          JOIN properties p ON p.id = t.property_id \

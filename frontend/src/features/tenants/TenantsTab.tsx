@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, formatCurrency, type OutstandingBalance, type Tenant } from "@/lib/api";
+import { api, formatCurrency, tenantName, type OutstandingBalance, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { Switch } from "@/components/ui/Switch";
 import { DeleteButton } from "@/components/ui/DeleteButton";
@@ -19,7 +19,8 @@ export function TenantsTab({
   outstanding: OutstandingBalance | null;
   onChange: () => Promise<void>;
 }) {
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [isCurrent, setIsCurrent] = useState(true);
@@ -38,13 +39,15 @@ export function TenantsTab({
         driverLicenseId = (await api.uploadAttachment(licenseFile)).id;
       }
       await api.createTenant(propertyId, {
-        name,
+        first_name: firstName,
+        last_name: lastName,
         email,
         phone,
         is_current: isCurrent,
         driver_license_id: driverLicenseId,
       });
-      setName("");
+      setFirstName("");
+      setLastName("");
       setEmail("");
       setPhone("");
       setIsCurrent(true);
@@ -64,8 +67,11 @@ export function TenantsTab({
       <form onSubmit={submit} className="mb-6 card p-5">
         {err && <p className="mb-3 text-sm text-red-700">{err}</p>}
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Name">
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+          <Field label="First name">
+            <input className="input" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          </Field>
+          <Field label="Last name">
+            <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} />
           </Field>
           <Field label="Email">
             <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -117,7 +123,7 @@ export function TenantsTab({
                   <tr key={t.id} className="border-b border-[var(--border)] last:border-0 transition hover:bg-[var(--background)]">
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-2 whitespace-nowrap font-semibold">
-                        {t.name}
+                        {tenantName(t)}
                         {t.is_current && (
                           <span className="badge bg-indigo-100 text-indigo-800">Current</span>
                         )}

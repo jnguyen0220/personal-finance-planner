@@ -117,7 +117,7 @@ export function ProvidersTab({
               <select className="input" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
                 {currentTenants.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.name}
+                    {`${t.first_name} ${t.last_name}`.trim()}
                     {t.phone ? ` · ${t.phone}` : " · no phone"}
                   </option>
                 ))}

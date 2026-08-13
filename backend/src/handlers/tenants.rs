@@ -9,14 +9,14 @@ use crate::models::{Lease, Tenant, TenantInput, TenantWithLeases};
 use crate::state::AppState;
 
 const COLUMNS: &str =
-    "id, property_id, name, email, phone, is_current, notifications_enabled, notes, driver_license_id, created_at";
+    "id, property_id, first_name, last_name, email, phone, is_current, notifications_enabled, notes, driver_license_id, created_at";
 
 pub async fn list(
     State(st): State<AppState>,
     Path(property_id): Path<String>,
 ) -> AppResult<Json<Vec<TenantWithLeases>>> {
     let tenants = sqlx::query_as::<_, Tenant>(&format!(
-        "SELECT {COLUMNS} FROM tenants WHERE property_id = ? ORDER BY is_current DESC, name"
+        "SELECT {COLUMNS} FROM tenants WHERE property_id = ? ORDER BY is_current DESC, last_name, first_name"
     ))
     .bind(&property_id)
     .fetch_all(&st.pool)
@@ -69,18 +69,19 @@ pub async fn create(
     Path(property_id): Path<String>,
     Json(input): Json<TenantInput>,
 ) -> AppResult<Json<TenantWithLeases>> {
-    if input.name.trim().is_empty() {
-        return Err(AppError::BadRequest("name is required".into()));
+    if input.first_name.trim().is_empty() {
+        return Err(AppError::BadRequest("first name is required".into()));
     }
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO tenants (id, property_id, name, email, phone, is_current, notifications_enabled, notes, driver_license_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tenants (id, property_id, first_name, last_name, email, phone, is_current, notifications_enabled, notes, driver_license_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&property_id)
-    .bind(input.name.trim())
+    .bind(input.first_name.trim())
+    .bind(input.last_name.trim())
     .bind(&input.email)
     .bind(&input.phone)
     .bind(input.is_current)
@@ -102,9 +103,10 @@ pub async fn update(
     Json(input): Json<TenantInput>,
 ) -> AppResult<Json<TenantWithLeases>> {
     let affected = sqlx::query(
-        "UPDATE tenants SET name = ?, email = ?, phone = ?, is_current = ?, notifications_enabled = ?, notes = ?, driver_license_id = ? WHERE id = ?",
+        "UPDATE tenants SET first_name = ?, last_name = ?, email = ?, phone = ?, is_current = ?, notifications_enabled = ?, notes = ?, driver_license_id = ? WHERE id = ?",
     )
-    .bind(input.name.trim())
+    .bind(input.first_name.trim())
+    .bind(input.last_name.trim())
     .bind(&input.email)
     .bind(&input.phone)
     .bind(input.is_current)

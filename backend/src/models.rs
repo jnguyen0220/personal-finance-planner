@@ -55,7 +55,8 @@ fn default_kind() -> String {
 pub struct Tenant {
     pub id: String,
     pub property_id: String,
-    pub name: String,
+    pub first_name: String,
+    pub last_name: String,
     pub email: String,
     pub phone: String,
     pub is_current: bool,
@@ -67,7 +68,9 @@ pub struct Tenant {
 
 #[derive(Deserialize)]
 pub struct TenantInput {
-    pub name: String,
+    pub first_name: String,
+    #[serde(default)]
+    pub last_name: String,
     #[serde(default)]
     pub email: String,
     #[serde(default)]
@@ -143,7 +146,9 @@ fn active_lease(leases: &[Lease]) -> Option<Lease> {
     leases
         .iter()
         .filter(|l| {
-            l.start_date.as_deref().map_or(true, |s| s <= today.as_str())
+            l.start_date
+                .as_deref()
+                .map_or(true, |s| s <= today.as_str())
                 && l.end_date.as_deref().map_or(true, |e| e >= today.as_str())
         })
         .max_by(|a, b| {

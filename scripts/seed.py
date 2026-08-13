@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS properties (
     notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tenants (
-    id TEXT PRIMARY KEY, property_id TEXT NOT NULL, name TEXT NOT NULL,
+    id TEXT PRIMARY KEY, property_id TEXT NOT NULL,
+    first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '',
     email TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
     is_current INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '',
     driver_license_id TEXT, created_at TEXT NOT NULL
@@ -114,7 +115,8 @@ def ensure_schema(db: sqlite3.Connection) -> None:
     wanted = {
         "properties": [("state", "TEXT NOT NULL DEFAULT ''")],
         "leases": [("payment_date", "TEXT"), ("late_fee", "REAL NOT NULL DEFAULT 0")],
-        "tenants": [("is_current", "INTEGER NOT NULL DEFAULT 0"), ("driver_license_id", "TEXT")],
+        "tenants": [("is_current", "INTEGER NOT NULL DEFAULT 0"), ("driver_license_id", "TEXT"),
+                    ("first_name", "TEXT NOT NULL DEFAULT ''"), ("last_name", "TEXT NOT NULL DEFAULT ''")],
         "transactions": [("tenant_name", "TEXT NOT NULL DEFAULT ''"),
                          ("borne_by", "TEXT NOT NULL DEFAULT 'landlord'")],
     }
@@ -203,10 +205,11 @@ def add_lease(db, tenant_id, rent, start, end, late_fee):
 
 def add_tenant(db, prop_id, name, is_current, notes):
     tid = new_id()
+    first, _, last = name.partition(" ")
     db.execute(
-        "INSERT INTO tenants (id, property_id, name, email, phone, is_current, "
-        "notes, driver_license_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (tid, prop_id, name, email_for(name), phone(), 1 if is_current else 0,
+        "INSERT INTO tenants (id, property_id, first_name, last_name, email, phone, is_current, "
+        "notes, driver_license_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (tid, prop_id, first, last, email_for(name), phone(), 1 if is_current else 0,
          notes, None, CREATED),
     )
     counts["tenants"] += 1

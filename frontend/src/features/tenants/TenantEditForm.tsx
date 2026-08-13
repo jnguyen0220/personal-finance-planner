@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, formatCurrency, type Lease, type Tenant } from "@/lib/api";
+import { api, formatCurrency, tenantName, type Lease, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { Switch } from "@/components/ui/Switch";
 import { DeleteButton } from "@/components/ui/DeleteButton";
@@ -16,7 +16,8 @@ export function TenantEditForm({
   onClose: () => void;
   onChange: () => Promise<void>;
 }) {
-  const [name, setName] = useState(tenant.name);
+  const [firstName, setFirstName] = useState(tenant.first_name);
+  const [lastName, setLastName] = useState(tenant.last_name);
   const [email, setEmail] = useState(tenant.email);
   const [phone, setPhone] = useState(tenant.phone);
   const [isCurrent, setIsCurrent] = useState(tenant.is_current);
@@ -38,7 +39,8 @@ export function TenantEditForm({
         driverLicenseId = (await api.uploadAttachment(licenseFile)).id;
       }
       await api.updateTenant(tenant.id, {
-        name,
+        first_name: firstName,
+        last_name: lastName,
         email,
         phone,
         is_current: isCurrent,
@@ -65,7 +67,7 @@ export function TenantEditForm({
         <header className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
           <div>
             <h2 className="text-lg font-bold tracking-tight">Edit tenant</h2>
-            <p className="text-sm text-[var(--muted)]">{tenant.name}</p>
+            <p className="text-sm text-[var(--muted)]">{tenantName(tenant)}</p>
           </div>
           <button
             type="button"
@@ -107,8 +109,11 @@ export function TenantEditForm({
               <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>
             )}
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Name">
-                <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+              <Field label="First name">
+                <input className="input" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+              </Field>
+              <Field label="Last name">
+                <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} />
               </Field>
               <Field label="Email">
                 <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />

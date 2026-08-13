@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS properties (
 CREATE TABLE IF NOT EXISTS tenants (
     id           TEXT PRIMARY KEY,
     property_id  TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-    name         TEXT NOT NULL,
+    first_name   TEXT NOT NULL DEFAULT '',
+    last_name    TEXT NOT NULL DEFAULT '',
     email        TEXT NOT NULL DEFAULT '',
     phone        TEXT NOT NULL DEFAULT '',
     is_current   INTEGER NOT NULL DEFAULT 0,
@@ -224,6 +225,34 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
     add_column_if_missing(
         pool,
+        "tenants",
+        "first_name",
+        "ALTER TABLE tenants ADD COLUMN first_name TEXT NOT NULL DEFAULT ''",
+    )
+    .await?;
+    add_column_if_missing(
+        pool,
+        "tenants",
+        "last_name",
+        "ALTER TABLE tenants ADD COLUMN last_name TEXT NOT NULL DEFAULT ''",
+    )
+    .await?;
+    // Split the legacy single `name` column into first/last, then drop it.
+    if column_exists(pool, "tenants", "name").await? {
+        sqlx::query(
+            "UPDATE tenants SET \
+                first_name = CASE WHEN instr(name, ' ') > 0 THEN substr(name, 1, instr(name, ' ') - 1) ELSE name END, \
+                last_name  = CASE WHEN instr(name, ' ') > 0 THEN substr(name, instr(name, ' ') + 1) ELSE '' END \
+             WHERE first_name = '' AND last_name = ''",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query("ALTER TABLE tenants DROP COLUMN name")
+            .execute(pool)
+            .await?;
+    }
+    add_column_if_missing(
+        pool,
         "properties",
         "city",
         "ALTER TABLE properties ADD COLUMN city TEXT NOT NULL DEFAULT ''",
@@ -309,7 +338,7 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // Backfill the tenant name from the legacy tenant_id link on older databases.
     if column_exists(pool, "transactions", "tenant_id").await? {
         sqlx::query(
-            "UPDATE transactions SET tenant_name = COALESCE((SELECT name FROM tenants WHERE tenants.id = transactions.tenant_id), '') \
+            "UPDATE transactions SET tenant_name = COALESCE((SELECT trim(first_name || ' ' || last_name) FROM tenants WHERE tenants.id = transactions.tenant_id), '') \
              WHERE tenant_name = '' AND tenant_id IS NOT NULL",
         )
         .execute(pool)

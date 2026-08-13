@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { CategoryInfo, Tenant, Transaction } from "@/lib/api";
+import { tenantName } from "@/lib/api";
 import { categoriesFor } from "./categories";
 import { CategoryForm } from "./CategoryForm";
 import { AllTransactionsTable, CategoryTable } from "./TransactionTables";
@@ -24,7 +25,7 @@ export function TransactionsTab({
   const [editing, setEditing] = useState<Transaction | null>(null);
 
   const currentTenant = tenants.find((t) => t.is_current);
-  const currentTenantName = currentTenant?.name ?? "";
+  const currentTenantName = currentTenant ? tenantName(currentTenant) : "";
   const fullRent = currentTenant?.active_lease?.monthly_rent ?? null;
 
   // A tab per applicable category, plus any legacy categories no longer defined.

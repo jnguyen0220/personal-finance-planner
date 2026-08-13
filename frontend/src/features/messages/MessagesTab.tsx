@@ -26,7 +26,7 @@ export function MessagesTab({
   const [err, setErr] = useState<string | null>(null);
 
   const tenantName = useMemo(
-    () => new Map(tenants.map((t) => [t.id, t.name])),
+    () => new Map(tenants.map((t) => [t.id, `${t.first_name} ${t.last_name}`.trim()])),
     [tenants],
   );
   const selected = currentTenants.find((t) => t.id === tenantId) ?? null;
@@ -76,7 +76,7 @@ export function MessagesTab({
                 >
                   {currentTenants.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name}
+                      {`${t.first_name} ${t.last_name}`.trim()}
                       {t.phone ? ` · ${t.phone}` : " · no phone"}
                     </option>
                   ))}
@@ -96,7 +96,7 @@ export function MessagesTab({
             </div>
             {selected && !selected.phone && (
               <p className="mt-2 text-xs text-amber-700">
-                {selected.name} has no phone number — sending will be recorded as failed.
+                {`${selected.first_name} ${selected.last_name}`.trim()} has no phone number — sending will be recorded as failed.
               </p>
             )}
             <div className="mt-3 flex justify-end">

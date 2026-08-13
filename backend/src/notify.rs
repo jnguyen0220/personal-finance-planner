@@ -182,7 +182,7 @@ struct LeaseRow {
 /// its configured `notify_days` window.
 async fn lease_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Error> {
     let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, t.name AS tenant_name, t.property_id, p.name AS property_name, l.end_date, l.notify_days \
+        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.property_id, p.name AS property_name, l.end_date, l.notify_days \
          FROM leases l \
          JOIN tenants t ON t.id = l.tenant_id \
          JOIN properties p ON p.id = t.property_id \
