@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { api, type CategoryInfo, type Transaction } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { Modal } from "@/components/ui/Modal";
-import { configFor } from "./categories";
+import { childrenOf, configFor } from "./categories";
 
 export function TransactionEditForm({
   transaction,
@@ -18,7 +18,18 @@ export function TransactionEditForm({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const cfg = configFor(categories, transaction.category);
+  // Editing may switch between siblings within the same group (e.g. a service's
+  // late fee ↔ repair), but not across unrelated categories.
+  const siblings = useMemo(() => {
+    const current = categories.find((c) => c.id === transaction.category_id);
+    const parentId = current?.parent_id ?? null;
+    return parentId ? childrenOf(categories, parentId).filter((c) => c.applies && c.selectable) : [];
+  }, [categories, transaction.category_id]);
+  const isGroup = siblings.length > 1;
+
+  const [leafId, setLeafId] = useState(transaction.category_id);
+  const cfg = configFor(categories, leafId);
+
   const [amount, setAmount] = useState(String(transaction.amount));
   const [date, setDate] = useState(transaction.date);
   const [description, setDescription] = useState(transaction.description);
@@ -28,7 +39,6 @@ export function TransactionEditForm({
   const [err, setErr] = useState<string | null>(null);
   const [tenantPaid, setTenantPaid] = useState(transaction.borne_by === "tenant");
 
-  // The backend flags which categories a tenant can pay and deduct from rent.
   const showTenantPaid = cfg.deductible;
 
   async function submit(e: React.FormEvent) {
@@ -41,8 +51,7 @@ export function TransactionEditForm({
         receiptId = (await api.uploadAttachment(file)).id;
       }
       await api.updateTransaction(transaction.id, {
-        kind: cfg.kind,
-        category: transaction.category,
+        category_id: leafId,
         amount: parseFloat(amount || "0"),
         date,
         description: cfg.fields.includes("description") ? description : transaction.description,
@@ -62,7 +71,7 @@ export function TransactionEditForm({
     <Modal
       title={
         <>
-          Edit <span className="capitalize">{transaction.category}</span>
+          Edit <span className="capitalize">{transaction.category_label}</span>
         </>
       }
       onClose={onClose}
@@ -71,6 +80,17 @@ export function TransactionEditForm({
       saving={saving}
     >
       <div className="grid grid-cols-2 gap-3">
+        {isGroup && (
+          <Field label="Type">
+            <select className="input" value={leafId} onChange={(e) => setLeafId(e.target.value)}>
+              {siblings.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         {cfg.fields.includes("date") && (
           <Field label="Date">
             <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} required />

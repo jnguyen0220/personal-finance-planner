@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatCurrency, type CategoryInfo } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { MoneyInput } from "@/components/ui/MoneyInput";
-import { configFor } from "./categories";
+import { configFor, leavesFor } from "./categories";
 
 export function CategoryForm({
   propertyId,
@@ -21,7 +21,21 @@ export function CategoryForm({
   fullRent?: number | null;
   onChange: () => Promise<void>;
 }) {
-  const cfg = configFor(categories, category);
+  // A tab is a top-level node; its selectable leaves populate the Type picker
+  // (a single leaf when the tab is itself a leaf).
+  const leaves = useMemo(() => {
+    const node = categories.find((c) => c.id === category);
+    return node ? leavesFor(categories, node) : [];
+  }, [categories, category]);
+  const isGroup = leaves.length > 1 || (leaves[0]?.id !== category);
+
+  const [leafId, setLeafId] = useState<string>(leaves[0]?.id ?? category);
+  useEffect(() => {
+    setLeafId(leaves[0]?.id ?? category);
+  }, [category, leaves]);
+
+  const cfg = configFor(categories, leafId);
+  const leaf = categories.find((c) => c.id === leafId);
   const today = new Date().toISOString().slice(0, 10);
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today);
@@ -33,7 +47,7 @@ export function CategoryForm({
   const [isFullRent, setIsFullRent] = useState(false);
   const [tenantPaid, setTenantPaid] = useState(false);
 
-  const showFullRent = fullRent != null && fullRent > 0;
+  const showFullRent = fullRent != null && fullRent > 0 && !!leaf?.counts_as_rent;
   // The backend flags which categories a tenant can pay and deduct from rent.
   const showTenantPaid = cfg.deductible;
 
@@ -52,8 +66,7 @@ export function CategoryForm({
         receiptId = (await api.uploadAttachment(file)).id;
       }
       await api.createTransaction(propertyId, {
-        kind: cfg.kind,
-        category,
+        category_id: leafId,
         amount: parseFloat(amount || "0"),
         date,
         description: cfg.fields.includes("description") ? description : "",
@@ -81,6 +94,17 @@ export function CategoryForm({
     <form onSubmit={submit} className="mb-6 card p-5">
       {err && <p className="mb-3 text-sm text-red-700">{err}</p>}
       <div className="flex flex-wrap items-end gap-3">
+        {isGroup && (
+          <Field label="Type">
+            <select className="input" value={leafId} onChange={(e) => setLeafId(e.target.value)}>
+              {leaves.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         {cfg.fields.includes("date") && (
           <Field label="Date">
             <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} required />

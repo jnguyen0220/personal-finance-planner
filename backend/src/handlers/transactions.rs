@@ -1,22 +1,34 @@
 use axum::extract::{Path, State};
 use axum::Json;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::categories::{canonical_kind, is_deductible};
+use crate::categories;
 use crate::error::{AppError, AppResult};
-use crate::handlers::delete_by_id;
+use crate::handlers::{delete_attachment, delete_by_id};
 use crate::models::{Transaction, TransactionInput};
 use crate::state::AppState;
 
-const COLUMNS: &str =
-    "id, property_id, kind, category, amount, date, description, tenant_name, borne_by, receipt_id, created_at";
+/// Reads join the category so every transaction carries its display label.
+const SELECT: &str =
+    "SELECT t.id, t.property_id, t.kind, t.category_id, c.label AS category_label, \
+     t.amount, t.date, t.description, t.tenant_name, t.borne_by, t.receipt_id, t.created_at \
+     FROM transactions t JOIN categories c ON c.id = t.category_id";
+
+async fn fetch_transaction(pool: &SqlitePool, id: &str) -> AppResult<Transaction> {
+    sqlx::query_as::<_, Transaction>(&format!("{SELECT} WHERE t.id = ?"))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
 
 pub async fn list_for_property(
     State(st): State<AppState>,
     Path(property_id): Path<String>,
 ) -> AppResult<Json<Vec<Transaction>>> {
     let rows = sqlx::query_as::<_, Transaction>(&format!(
-        "SELECT {COLUMNS} FROM transactions WHERE property_id = ? ORDER BY date DESC, created_at DESC"
+        "{SELECT} WHERE t.property_id = ? ORDER BY t.date DESC, t.created_at DESC"
     ))
     .bind(&property_id)
     .fetch_all(&st.pool)
@@ -24,26 +36,35 @@ pub async fn list_for_property(
     Ok(Json(rows))
 }
 
-/// Standard categories dictate their own income/expense kind, so the client
-/// value is only trusted for unknown (legacy) categories.
-fn resolve_kind(category: &str, property_kind: &str, requested: &str) -> AppResult<String> {
-    match canonical_kind(category, property_kind) {
-        Some(k) => Ok(k.to_string()),
-        None if requested == "income" || requested == "expense" => Ok(requested.to_string()),
-        None => Err(AppError::BadRequest(
-            "kind must be 'income' or 'expense'".into(),
-        )),
+/// The income/expense kind and who bore the cost, both derived from the chosen
+/// leaf category — the single source of truth. A tenant only "bears" (and thus
+/// deducts from rent) a category that is marked deductible.
+async fn resolve(
+    pool: &SqlitePool,
+    input: &TransactionInput,
+    property_kind: &str,
+) -> AppResult<(String, String)> {
+    let category = categories::get(pool, &input.category_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("unknown category".into()))?;
+    if !category.selectable {
+        return Err(AppError::BadRequest(
+            "category is a group and can't be recorded against".into(),
+        ));
     }
-}
-
-/// Only categories the backend marks deductible can be borne by the tenant (a
-/// credit against rent owed); every other transaction is attributed to the landlord.
-fn resolve_borne_by(category: &str, property_kind: &str, requested: &str) -> String {
-    if requested == "tenant" && is_deductible(category, property_kind) {
+    if !category.applies_to(property_kind) {
+        return Err(AppError::BadRequest(
+            "category is not available for this property".into(),
+        ));
+    }
+    // A tenant only "bears" (and deducts) a cost on a rental that collects rent.
+    let deductible = category.deductible && property_kind == "rental";
+    let borne_by = if input.borne_by == "tenant" && deductible {
         "tenant".to_string()
     } else {
         "landlord".to_string()
-    }
+    };
+    Ok((category.kind, borne_by))
 }
 
 pub async fn create(
@@ -59,19 +80,18 @@ pub async fn create(
         .fetch_optional(&st.pool)
         .await?
         .ok_or(AppError::NotFound)?;
-    let kind = resolve_kind(&input.category, &property_kind, &input.kind)?;
-    let borne_by = resolve_borne_by(&input.category, &property_kind, &input.borne_by);
+    let (kind, borne_by) = resolve(&st.pool, &input, &property_kind).await?;
 
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let row = sqlx::query_as::<_, Transaction>(&format!(
-        "INSERT INTO transactions (id, property_id, kind, category, amount, date, description, tenant_name, borne_by, receipt_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
+    sqlx::query(
+        "INSERT INTO transactions (id, property_id, kind, category_id, amount, date, description, tenant_name, borne_by, receipt_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
     .bind(&id)
     .bind(&property_id)
     .bind(&kind)
-    .bind(&input.category)
+    .bind(&input.category_id)
     .bind(input.amount)
     .bind(&input.date)
     .bind(&input.description)
@@ -79,9 +99,9 @@ pub async fn create(
     .bind(&borne_by)
     .bind(&input.receipt_id)
     .bind(&now)
-    .fetch_one(&st.pool)
+    .execute(&st.pool)
     .await?;
-    Ok(Json(row))
+    Ok(Json(fetch_transaction(&st.pool, &id).await?))
 }
 
 pub async fn update(
@@ -96,15 +116,21 @@ pub async fn update(
     .fetch_optional(&st.pool)
     .await?
     .ok_or(AppError::NotFound)?;
-    let kind = resolve_kind(&input.category, &property_kind, &input.kind)?;
-    let borne_by = resolve_borne_by(&input.category, &property_kind, &input.borne_by);
+    let (kind, borne_by) = resolve(&st.pool, &input, &property_kind).await?;
 
-    let row = sqlx::query_as::<_, Transaction>(&format!(
-        "UPDATE transactions SET kind = ?, category = ?, amount = ?, date = ?, description = ?, tenant_name = ?, borne_by = ?, receipt_id = ? \
-         WHERE id = ? RETURNING {COLUMNS}"
-    ))
+    let old_receipt =
+        sqlx::query_scalar::<_, Option<String>>("SELECT receipt_id FROM transactions WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&st.pool)
+            .await?
+            .flatten();
+
+    let affected = sqlx::query(
+        "UPDATE transactions SET kind = ?, category_id = ?, amount = ?, date = ?, description = ?, tenant_name = ?, borne_by = ?, receipt_id = ? \
+         WHERE id = ?",
+    )
     .bind(&kind)
-    .bind(&input.category)
+    .bind(&input.category_id)
     .bind(input.amount)
     .bind(&input.date)
     .bind(&input.description)
@@ -112,15 +138,34 @@ pub async fn update(
     .bind(&borne_by)
     .bind(&input.receipt_id)
     .bind(&id)
-    .fetch_optional(&st.pool)
+    .execute(&st.pool)
     .await?
-    .ok_or(AppError::NotFound)?;
-    Ok(Json(row))
+    .rows_affected();
+    if affected == 0 {
+        return Err(AppError::NotFound);
+    }
+    // Drop the previous receipt once it's no longer referenced.
+    if let Some(old) = old_receipt {
+        if input.receipt_id.as_deref() != Some(old.as_str()) {
+            delete_attachment(&st, &old).await?;
+        }
+    }
+    Ok(Json(fetch_transaction(&st.pool, &id).await?))
 }
 
 pub async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<axum::http::StatusCode> {
-    delete_by_id(&st, "transactions", &id).await
+    let receipt_id =
+        sqlx::query_scalar::<_, Option<String>>("SELECT receipt_id FROM transactions WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&st.pool)
+            .await?
+            .flatten();
+    let status = delete_by_id(&st, "transactions", &id).await?;
+    if let Some(rid) = receipt_id {
+        delete_attachment(&st, &rid).await?;
+    }
+    Ok(status)
 }

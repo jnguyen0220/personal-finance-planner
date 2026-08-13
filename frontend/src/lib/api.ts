@@ -55,7 +55,6 @@ export interface LeaseInput {
   end_date?: string | null;
   rent_due_day?: number | null;
   late_fee?: number;
-  notify_days?: number;
   notes?: string;
 }
 
@@ -122,7 +121,8 @@ export interface Transaction {
   id: string;
   property_id: string;
   kind: TxKind;
-  category: string;
+  category_id: string;
+  category_label: string;
   amount: number;
   date: string;
   description: string;
@@ -133,8 +133,7 @@ export interface Transaction {
 }
 
 export interface TransactionInput {
-  kind: TxKind;
-  category?: string;
+  category_id: string;
   amount: number;
   date: string;
   description?: string;
@@ -165,7 +164,6 @@ export interface InsuranceInput {
   premium?: number;
   start_date?: string | null;
   expiry_date: string;
-  notify_days?: number;
   notes?: string;
 }
 
@@ -246,14 +244,39 @@ export interface TaxReport {
   net: number;
 }
 
-/// A category resolved by the backend for a given property kind.
+/// A category resolved by the backend for a given property kind. Categories
+/// form a tree: a node with `parent_id` is a sub-category, and a non-selectable
+/// node is a grouping parent that organizes its children.
 export interface CategoryInfo {
-  name: string;
+  id: string;
+  label: string;
+  parent_id: string | null;
   kind: TxKind;
   fields: TxField[];
-  applies: boolean;
   deductible: boolean;
+  counts_as_rent: boolean;
+  selectable: boolean;
+  applies: boolean;
+  position: number;
 }
+
+/// A category with its raw, editable attributes, as managed on the Admin page.
+export interface AdminCategory {
+  id: string;
+  label: string;
+  parent_id: string | null;
+  kind: TxKind;
+  fields: string[];
+  deductible: boolean;
+  applies_rental: boolean;
+  applies_personal: boolean;
+  selectable: boolean;
+  counts_as_rent: boolean;
+  position?: number;
+}
+
+/// The known editable dropdown lists managed on the Admin page.
+export type OptionListName = "provider_kinds";
 
 /// A US state served by the backend for address selection.
 export interface UsState {
@@ -313,7 +336,11 @@ export interface BroadcastRecipient {
 
 export interface Settings {
   messaging_enabled: boolean;
+  property_messaging_enabled: boolean;
   signature: string;
+  lease_notify_days: number;
+  insurance_notify_days: number;
+  contact_phones: string[];
 }
 
 export interface TemplatePlaceholder {
@@ -325,6 +352,7 @@ export interface MessageTemplate {
   kind: string;
   label: string;
   description: string;
+  group: string;
   placeholders: TemplatePlaceholder[];
   body: string;
   default_body: string;
@@ -436,6 +464,27 @@ export const api = {
 
   categories: (kind: PropertyKind) =>
     cachedRequest<CategoryInfo[]>(`/categories?kind=${kind}`),
+
+  listAdminCategories: () => request<AdminCategory[]>("/admin/categories"),
+  createCategory: (input: AdminCategory) =>
+    request<AdminCategory>("/admin/categories", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateCategory: (id: string, input: AdminCategory) =>
+    request<AdminCategory>(`/admin/categories/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  deleteCategory: (id: string) =>
+    request<void>(`/admin/categories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  optionList: (list: OptionListName) => cachedRequest<string[]>(`/option-lists/${list}`),
+  updateOptionList: (list: OptionListName, values: string[]) =>
+    request<string[]>(`/option-lists/${list}`, {
+      method: "PUT",
+      body: JSON.stringify(values),
+    }),
 
   states: () => cachedRequest<UsState[]>("/states"),
 
@@ -618,6 +667,17 @@ export function categoriesQueryOptions(kind: PropertyKind) {
   return {
     queryKey: ["categories", kind] as const,
     queryFn: () => api.categories(kind),
+    staleTime: Infinity,
+    gcTime: Infinity,
+  };
+}
+
+// Editable dropdown lists (provider kinds). Kept fresh for the session;
+// cross-reload refetches are gated by the ETag hash in cachedRequest.
+export function optionListQueryOptions(list: OptionListName) {
+  return {
+    queryKey: ["option-list", list] as const,
+    queryFn: () => api.optionList(list),
     staleTime: Infinity,
     gcTime: Infinity,
   };

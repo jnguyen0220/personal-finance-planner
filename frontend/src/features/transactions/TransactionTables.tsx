@@ -3,7 +3,10 @@
 import { api, formatCurrency, type CategoryInfo, type Transaction } from "@/lib/api";
 import { DeleteButton } from "@/components/ui/DeleteButton";
 import { EditButton } from "@/components/ui/EditButton";
-import { configFor, FIELD_LABELS, type TxField } from "./categories";
+import { childrenOf, configFor, FIELD_LABELS, type TxField } from "./categories";
+
+// Column order for grouping-parent tabs, derived from the field vocabulary.
+const FIELD_ORDER = Object.keys(FIELD_LABELS) as TxField[];
 
 // Secondary columns collapse first so tables fit narrow screens without scrolling.
 const FIELD_HIDE: Partial<Record<TxField, string>> = {
@@ -99,14 +102,21 @@ export function CategoryTable({
   onEdit: (t: Transaction) => void;
   onChange: () => Promise<void>;
 }) {
-  const cfg = configFor(categories, category);
+  const node = categories.find((c) => c.id === category);
+  // A grouping parent mixes sub-categories, so add a Type column and use the
+  // union of its children's fields; a leaf uses its own fields.
+  const isGroup = node ? !node.selectable : false;
+  const fields = isGroup
+    ? FIELD_ORDER.filter((f) => childrenOf(categories, category).some((c) => c.fields.includes(f)))
+    : configFor(categories, category).fields;
   return (
     <div className="table-card">
       <div className="table-scroll">
       <table className="data-table">
         <thead>
           <tr>
-            {cfg.fields.map((f) => (
+            {isGroup && <th className="th">Type</th>}
+            {fields.map((f) => (
               <th key={f} className={`th ${f === "amount" ? "text-right" : ""} ${FIELD_HIDE[f] ?? ""}`}>
                 {FIELD_LABELS[f]}
               </th>
@@ -117,7 +127,8 @@ export function CategoryTable({
         <tbody>
           {rows.map((t) => (
             <tr key={t.id}>
-              {cfg.fields.map((f) => txCell(f, t))}
+              {isGroup && <td className="td capitalize text-[var(--muted)]">{t.category_label}</td>}
+              {fields.map((f) => txCell(f, t))}
               <RowActions transaction={t} onEdit={onEdit} onChange={onChange} />
             </tr>
           ))}
@@ -156,7 +167,7 @@ export function AllTransactionsTable({
             <tr key={t.id}>
               <td className="td whitespace-nowrap">{t.date}</td>
               <td className="td">
-                <span className="badge bg-slate-100 capitalize text-slate-700">{t.category}</span>
+                <span className="badge bg-slate-100 capitalize text-slate-700">{t.category_label}</span>
               </td>
               <td className="td max-w-[14rem] truncate text-[var(--muted)]">{t.tenant_name || t.description || "—"}</td>
               {txCell("amount", t)}

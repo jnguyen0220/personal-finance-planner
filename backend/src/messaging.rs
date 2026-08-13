@@ -24,10 +24,25 @@ struct Pending {
 /// Generates and sends all due automated messages. Each message is reserved
 /// idempotently; a condition already handled (same `dedup_key`) is skipped.
 pub async fn run(st: &AppState) -> Result<(), sqlx::Error> {
-    if !crate::settings::get_bool(&st.pool, crate::settings::MESSAGING_ENABLED, true).await? {
-        tracing::info!("automated messaging disabled — skipping run");
-        return Ok(());
+    if crate::settings::get_bool(&st.pool, crate::settings::MESSAGING_ENABLED, true).await? {
+        send_tenant_reminders(st).await?;
+    } else {
+        tracing::info!("tenant messaging disabled — skipping tenant reminders");
     }
+
+    if crate::settings::get_bool(&st.pool, crate::settings::PROPERTY_MESSAGING_ENABLED, true)
+        .await?
+    {
+        contact_reminders(st).await?;
+    } else {
+        tracing::info!("property messaging disabled — skipping contact reminders");
+    }
+    Ok(())
+}
+
+/// Sends the due tenant reminders, reserving each idempotently so a condition
+/// already handled (same `dedup_key`) is skipped.
+async fn send_tenant_reminders(st: &AppState) -> Result<(), sqlx::Error> {
     for p in collect_pending(st).await? {
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -63,6 +78,57 @@ pub async fn run(st: &AppState) -> Result<(), sqlx::Error> {
             .bind(&id)
             .execute(&st.pool)
             .await?;
+    }
+    Ok(())
+}
+
+/// Texts the operator's contact phones about lease and insurance expiry, reusing
+/// the notifications already computed by `notify::reconcile` and sending each
+/// condition once (idempotent via the `contact_reminders` ledger).
+async fn contact_reminders(st: &AppState) -> Result<(), sqlx::Error> {
+    let phones = crate::settings::get_list(&st.pool, crate::settings::CONTACT_PHONES).await?;
+    if phones.is_empty() {
+        return Ok(());
+    }
+
+    let alerts = sqlx::query_as::<_, (Option<String>, String, String, String)>(
+        "SELECT dedup_key, kind, title, body FROM notifications \
+         WHERE dismissed_at IS NULL AND dedup_key IS NOT NULL \
+           AND kind IN ('lease_ending', 'lease_expired', 'insurance_expiring', 'insurance_expired')",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+
+    let lease_template = crate::templates::body(&st.pool, "landlord_lease").await?;
+    let insurance_template = crate::templates::body(&st.pool, "landlord_insurance").await?;
+
+    for (dedup_key, kind, title, body) in alerts {
+        let Some(dedup_key) = dedup_key else { continue };
+        let key = format!("contact:{dedup_key}");
+        let now = chrono::Utc::now().to_rfc3339();
+        let reserved = sqlx::query(
+            "INSERT OR IGNORE INTO contact_reminders (dedup_key, created_at) VALUES (?, ?)",
+        )
+        .bind(&key)
+        .bind(&now)
+        .execute(&st.pool)
+        .await?
+        .rows_affected();
+        if reserved == 0 {
+            continue; // already texted for this condition
+        }
+        let template = if kind.starts_with("insurance") {
+            &insurance_template
+        } else {
+            &lease_template
+        };
+        let alert = format!("{title}\n{body}");
+        let message = crate::templates::render(template, &[("alert", alert)]);
+        for phone in &phones {
+            if let Err(e) = sms::send(phone, &message).await {
+                tracing::error!("contact reminder to {phone} failed: {e}");
+            }
+        }
     }
     Ok(())
 }
@@ -158,14 +224,19 @@ struct LeaseRow {
     state: String,
     zip: String,
     end_date: String,
-    notify_days: i64,
 }
 
 /// Reminds current tenants whose latest lease is ending within its `notify_days`
 /// window, once per lease.
 async fn lease_expiring_messages(pool: &SqlitePool) -> Result<Vec<Pending>, sqlx::Error> {
+    let notify_days = crate::settings::get_i64(
+        pool,
+        crate::settings::LEASE_NOTIFY_DAYS,
+        crate::settings::NOTIFY_DAYS_DEFAULT,
+    )
+    .await?;
     let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.address, p.city, p.state, p.zip, l.end_date, l.notify_days \
+        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.address, p.city, p.state, p.zip, l.end_date \
          FROM leases l \
          JOIN tenants t ON t.id = l.tenant_id \
          JOIN properties p ON p.id = t.property_id \
@@ -187,7 +258,7 @@ async fn lease_expiring_messages(pool: &SqlitePool) -> Result<Vec<Pending>, sqlx
         .into_values()
         .filter_map(|row| {
             let days = dates::days_until(&row.end_date);
-            (days >= 0 && days <= row.notify_days).then(|| Pending {
+            (days >= 0 && days <= notify_days).then(|| Pending {
                 kind: "lease_expiring".into(),
                 body: crate::templates::render(
                     &template,

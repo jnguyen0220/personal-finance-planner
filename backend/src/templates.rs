@@ -15,6 +15,8 @@ pub struct TemplateDef {
     pub kind: &'static str,
     pub label: &'static str,
     pub description: &'static str,
+    /// Audience the message is sent to: "tenant" or "property" (landlord).
+    pub group: &'static str,
     pub placeholders: &'static [Placeholder],
     pub default_body: &'static str,
 }
@@ -25,6 +27,7 @@ pub const TEMPLATES: &[TemplateDef] = &[
         kind: "outstanding_balance",
         label: "Outstanding balance reminder",
         description: "Sent once a month to a current tenant who still owes rent.",
+        group: "tenant",
         placeholders: &[
             Placeholder { token: "tenant_name", description: "Tenant's full name" },
             Placeholder { token: "address", description: "Property street address" },
@@ -33,7 +36,7 @@ pub const TEMPLATES: &[TemplateDef] = &[
             Placeholder { token: "zip", description: "Property ZIP code" },
             Placeholder { token: "balance", description: "Amount owed, e.g. $1,200.00" },
             Placeholder { token: "year", description: "Year the balance is for" },
-            Placeholder { token: "signature", description: "Your sign-off (set on the Settings page)" },
+            Placeholder { token: "signature", description: "Your sign-off (set on the Admin page)" },
         ],
         default_body: "Hi {tenant_name}, our records show an outstanding balance of {balance} for {year}. Please arrange payment at your earliest convenience. Thank you.\n\n{signature}",
     },
@@ -41,6 +44,7 @@ pub const TEMPLATES: &[TemplateDef] = &[
         kind: "lease_expiring",
         label: "Lease expiry reminder",
         description: "Sent when a current tenant's lease is within its reminder window.",
+        group: "tenant",
         placeholders: &[
             Placeholder { token: "tenant_name", description: "Tenant's full name" },
             Placeholder { token: "address", description: "Property street address" },
@@ -48,7 +52,7 @@ pub const TEMPLATES: &[TemplateDef] = &[
             Placeholder { token: "state", description: "Property state" },
             Placeholder { token: "zip", description: "Property ZIP code" },
             Placeholder { token: "end_date", description: "Lease end date" },
-            Placeholder { token: "signature", description: "Your sign-off (set on the Settings page)" },
+            Placeholder { token: "signature", description: "Your sign-off (set on the Admin page)" },
         ],
         default_body: "Hi {tenant_name}, your lease is set to expire on {end_date}. Please contact us to discuss renewal.\n\n{signature}",
     },
@@ -56,6 +60,7 @@ pub const TEMPLATES: &[TemplateDef] = &[
         kind: "providers",
         label: "Utility & HOA info",
         description: "Sent to a tenant with the property's utility providers and HOA contacts.",
+        group: "tenant",
         placeholders: &[
             Placeholder { token: "address", description: "Property street address" },
             Placeholder { token: "city", description: "Property city" },
@@ -63,9 +68,29 @@ pub const TEMPLATES: &[TemplateDef] = &[
             Placeholder { token: "zip", description: "Property ZIP code" },
             Placeholder { token: "providers", description: "Bulleted list of utility providers" },
             Placeholder { token: "hoa", description: "HOA contact line (blank when none)" },
-            Placeholder { token: "signature", description: "Your sign-off (set on the Settings page)" },
+            Placeholder { token: "signature", description: "Your sign-off (set on the Admin page)" },
         ],
         default_body: "Utility providers for {address}, {city}, {state} {zip}:\n{providers}{hoa}\n\n{signature}",
+    },
+    TemplateDef {
+        kind: "landlord_lease",
+        label: "Lease expiry alert (landlord)",
+        description: "Texted to your contact phones when a tenant's lease is ending or has ended.",
+        group: "property",
+        placeholders: &[
+            Placeholder { token: "alert", description: "The lease alert detail (tenant, property, date)" },
+        ],
+        default_body: "{alert}",
+    },
+    TemplateDef {
+        kind: "landlord_insurance",
+        label: "Insurance expiry alert (landlord)",
+        description: "Texted to your contact phones when a property's insurance is expiring or has expired.",
+        group: "property",
+        placeholders: &[
+            Placeholder { token: "alert", description: "The insurance alert detail (property, provider, date)" },
+        ],
+        default_body: "{alert}",
     },
 ];
 

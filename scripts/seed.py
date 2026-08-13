@@ -15,7 +15,7 @@ tenant embodies a distinct behaviour so the whole app can be exercised:
   * 91 Cedar Road   - OUT-OF-POCKET: tenant pays for a repair and yard work from
                       their own pocket (borne_by = tenant), credited against rent.
 
-Also seeds mortgages, property tax, utilities income, landlord repairs and
+Also seeds mortgages, property tax, landlord repairs and
 yearly insurance policies (active / expiring / expired) plus the leases'
 new payment_date and late_fee fields.
 
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS leases (
 );
 CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY, property_id TEXT NOT NULL, kind TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'other', amount REAL NOT NULL, date TEXT NOT NULL,
+    category_id TEXT NOT NULL DEFAULT 'other', amount REAL NOT NULL, date TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '', tenant_name TEXT NOT NULL DEFAULT '',
     borne_by TEXT NOT NULL DEFAULT 'landlord', receipt_id TEXT, created_at TEXT NOT NULL
 );
@@ -180,13 +180,13 @@ def phone() -> str:
     return f"555-0{random.randint(100, 999)}-{random.randint(1000, 9999)}"
 
 
-def add_tx(db, prop_id, kind, category, amount, d, desc,
+def add_tx(db, prop_id, kind, category_id, amount, d, desc,
            tenant_name="", borne_by="landlord"):
     db.execute(
-        "INSERT INTO transactions (id, property_id, kind, category, amount, date, "
+        "INSERT INTO transactions (id, property_id, kind, category_id, amount, date, "
         "description, tenant_name, borne_by, receipt_id, created_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (new_id(), prop_id, kind, category, float(amount), iso(d), desc,
+        (new_id(), prop_id, kind, category_id, float(amount), iso(d), desc,
          tenant_name, borne_by, None, CREATED),
     )
     counts["transactions"] += 1
@@ -249,7 +249,7 @@ def emit_current_tenant(db, prop_id, name, rent, late_fee, profile):
                 continue
             add_tx(db, prop_id, "income", "rent", rent, d, f"Monthly rent - {name}", name)
             if late:
-                add_tx(db, prop_id, "income", "late fee", late_fee, d,
+                add_tx(db, prop_id, "income", "late_fee", late_fee, d,
                        f"Late payment fee - {name}", name)
                 counts["late_fees"] += 1
 
@@ -286,13 +286,13 @@ def emit_current_tenant(db, prop_id, name, rent, late_fee, profile):
             if key == credit_repair:
                 add_tx(db, prop_id, "expense", "repair", rent, date(m.year, m.month, 12),
                        f"Water heater replacement (paid by tenant) - {name}",
-                       name, borne_by="tenant")
+                       borne_by="tenant")
                 counts["tenant_paid"] += 1
                 continue
             if key == credit_yard:
                 add_tx(db, prop_id, "expense", "other", rent, date(m.year, m.month, 8),
                        f"Yard landscaping (paid by tenant) - {name}",
-                       name, borne_by="tenant")
+                       borne_by="tenant")
                 counts["tenant_paid"] += 1
                 continue
             d = min(date(m.year, m.month, random.randint(1, DUE_DAY)), TODAY)
@@ -308,11 +308,6 @@ def emit_landlord_costs(db, prop_id, p, tenant_spans):
         if m.month == 4:  # annual property tax
             add_tx(db, prop_id, "expense", "tax", p["tax"],
                    date(m.year, 4, 15), f"Property tax {m.year}")
-        if m.month in (1, 4, 7, 10):  # quarterly utilities billed to the tenant
-            d = date(m.year, m.month, random.randint(8, 15))
-            if d <= TODAY:
-                add_tx(db, prop_id, "income", "utilities", random.randint(80, 180), d,
-                       "Utilities reimbursement", active_name(tenant_spans, d))
 
     for yr in range(WINDOW_START.year, TODAY.year + 1):
         for _ in range(random.randint(1, 3)):
@@ -345,7 +340,7 @@ def emit_insurance(db, prop_id, pi, p):
 
 def main() -> None:
     db = sqlite3.connect(os.path.abspath(DB_PATH))
-    db.execute("PRAGMA foreign_keys = ON")
+    db.execute("PRAGMA foreign_keys = OFF")
     ensure_schema(db)
 
     # Reset domain tables (uploaded attachments left untouched).

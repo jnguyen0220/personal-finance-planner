@@ -20,7 +20,11 @@ pub async fn list_for_property(
     .bind(&property_id)
     .fetch_all(&st.pool)
     .await?;
-    Ok(Json(rows.into_iter().map(InsurancePolicyView::from_policy).collect()))
+    Ok(Json(
+        rows.into_iter()
+            .map(InsurancePolicyView::from_policy)
+            .collect(),
+    ))
 }
 
 pub async fn create(
@@ -37,8 +41,8 @@ pub async fn create(
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let policy = sqlx::query_as::<_, InsurancePolicy>(&format!(
-        "INSERT INTO insurance_policies (id, property_id, provider, policy_number, premium, start_date, expiry_date, notify_days, notes, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+        "INSERT INTO insurance_policies (id, property_id, provider, policy_number, premium, start_date, expiry_date, notes, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
     ))
     .bind(&id)
     .bind(&property_id)
@@ -47,7 +51,6 @@ pub async fn create(
     .bind(input.premium)
     .bind(&input.start_date)
     .bind(&input.expiry_date)
-    .bind(input.notify_days)
     .bind(&input.notes)
     .bind(&now)
     .fetch_one(&st.pool)
@@ -61,7 +64,7 @@ pub async fn update(
     Json(input): Json<InsuranceInput>,
 ) -> AppResult<Json<InsurancePolicyView>> {
     let policy = sqlx::query_as::<_, InsurancePolicy>(&format!(
-        "UPDATE insurance_policies SET provider = ?, policy_number = ?, premium = ?, start_date = ?, expiry_date = ?, notify_days = ?, notes = ? \
+        "UPDATE insurance_policies SET provider = ?, policy_number = ?, premium = ?, start_date = ?, expiry_date = ?, notes = ? \
          WHERE id = ? RETURNING {COLUMNS}"
     ))
     .bind(input.provider.trim())
@@ -69,7 +72,6 @@ pub async fn update(
     .bind(input.premium)
     .bind(&input.start_date)
     .bind(&input.expiry_date)
-    .bind(input.notify_days)
     .bind(&input.notes)
     .bind(&id)
     .fetch_optional(&st.pool)

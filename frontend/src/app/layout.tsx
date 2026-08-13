@@ -40,11 +40,11 @@ export default function RootLayout({
                   Tax report
                 </Link>
                 <Link
-                  href="/settings"
+                  href="/admin"
                   className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[var(--muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--foreground)]"
                 >
                   <SettingsIcon />
-                  Settings
+                  Admin
                 </Link>
                 <Notifications />
               </div>

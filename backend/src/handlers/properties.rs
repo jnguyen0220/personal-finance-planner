@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::dates::{current_day_of_month, current_month_index, current_year, month_index};
 use crate::error::{AppError, AppResult};
-use crate::handlers::delete_by_id;
+use crate::handlers::{delete_attachment, delete_by_id};
 use crate::models::{
     CategoryTotal, OutstandingBalance, OverviewResponse, OverviewRow, PortfolioTotals, Property,
     PropertyInput, PropertySummary, SummaryQuery, TaxCategoryTotal, TaxPropertyReport, TaxReport,
@@ -14,16 +14,11 @@ use crate::state::AppState;
 
 const COLUMNS: &str = "id, name, address, city, state, zip, kind, reminders_enabled, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at";
 
-/// Utilities on a rental are treated as pass-through income, so the matching
-/// expense is excluded from every income/expense rollup. Single source of truth
-/// for that rule; assumes the `transactions t`/`properties p` aliases are in scope.
-const EXCLUDE_RENTAL_UTILITIES: &str =
-    "NOT (p.kind = 'rental' AND t.kind = 'expense' AND t.category = 'utilities')";
-
-/// Rent credited in a year: rent income plus tenant-borne expenses (which the
-/// tenant deducts from rent). Single source of truth for the "paid" figure.
+/// Rent credited in a year: income categories flagged `counts_as_rent`, plus any
+/// tenant-borne expense (which the tenant deducts from rent). Single source of
+/// truth for the "paid" figure. Assumes `transactions t` JOIN `categories c`.
 pub(crate) const RENT_PAID_PREDICATE: &str =
-    "(category = 'rent' AND kind = 'income') OR (kind = 'expense' AND borne_by = 'tenant')";
+    "(c.counts_as_rent = 1 OR t.borne_by = 'tenant')";
 
 pub async fn get(State(st): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Property>> {
     let row =
@@ -115,7 +110,21 @@ pub async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<axum::http::StatusCode> {
-    delete_by_id(&st, "properties", &id).await
+    // Cascade removes the property's transactions and tenants, so collect their
+    // uploads first and delete them once those rows are gone.
+    let attachment_ids = sqlx::query_scalar::<_, String>(
+        "SELECT receipt_id FROM transactions WHERE property_id = ?1 AND receipt_id IS NOT NULL \
+         UNION \
+         SELECT driver_license_id FROM tenants WHERE property_id = ?1 AND driver_license_id IS NOT NULL",
+    )
+    .bind(&id)
+    .fetch_all(&st.pool)
+    .await?;
+    let status = delete_by_id(&st, "properties", &id).await?;
+    for aid in attachment_ids {
+        delete_attachment(&st, &aid).await?;
+    }
+    Ok(status)
 }
 
 pub async fn summary(
@@ -124,15 +133,13 @@ pub async fn summary(
     Query(q): Query<SummaryQuery>,
 ) -> AppResult<Json<PropertySummary>> {
     let year = validate_year(&q.year)?;
-    let row = sqlx::query_as::<_, PropertySummary>(&format!(
+    let row = sqlx::query_as::<_, PropertySummary>(
         "SELECT \
-            CAST(COALESCE(SUM(CASE WHEN t.kind = 'income'  THEN t.amount ELSE 0 END), 0) AS REAL) AS total_income, \
-            CAST(COALESCE(SUM(CASE WHEN t.kind = 'expense' THEN t.amount ELSE 0 END), 0) AS REAL) AS total_expense \
-         FROM transactions t \
-         JOIN properties p ON p.id = t.property_id \
-         WHERE t.property_id = ?1 AND (?2 IS NULL OR substr(t.date, 1, 4) = ?2) \
-           AND {EXCLUDE_RENTAL_UTILITIES}"
-    ))
+            CAST(COALESCE(SUM(CASE WHEN kind = 'income'  THEN amount ELSE 0 END), 0) AS REAL) AS total_income, \
+            CAST(COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS REAL) AS total_expense \
+         FROM transactions \
+         WHERE property_id = ?1 AND (?2 IS NULL OR substr(date, 1, 4) = ?2)",
+    )
     .bind(&id)
     .bind(year)
     .fetch_one(&st.pool)
@@ -146,15 +153,14 @@ pub async fn breakdown(
     Query(q): Query<SummaryQuery>,
 ) -> AppResult<Json<Vec<CategoryTotal>>> {
     let year = validate_year(&q.year)?;
-    let rows = sqlx::query_as::<_, CategoryTotal>(&format!(
-        "SELECT t.kind, t.category, CAST(SUM(t.amount) AS REAL) AS total \
+    let rows = sqlx::query_as::<_, CategoryTotal>(
+        "SELECT t.kind, c.label AS category, CAST(SUM(t.amount) AS REAL) AS total \
          FROM transactions t \
-         JOIN properties p ON p.id = t.property_id \
+         JOIN categories c ON c.id = t.category_id \
          WHERE t.property_id = ?1 AND (?2 IS NULL OR substr(t.date, 1, 4) = ?2) \
-           AND {EXCLUDE_RENTAL_UTILITIES} \
-         GROUP BY t.kind, t.category \
-         ORDER BY t.kind, total DESC"
-    ))
+         GROUP BY t.kind, c.id \
+         ORDER BY t.kind, total DESC",
+    )
     .bind(&id)
     .bind(year)
     .fetch_all(&st.pool)
@@ -249,16 +255,14 @@ pub async fn overview(
             .fetch_all(&st.pool)
             .await?;
 
-    let sums = sqlx::query_as::<_, (String, f64, f64)>(&format!(
-        "SELECT t.property_id, \
-            CAST(COALESCE(SUM(CASE WHEN t.kind = 'income'  THEN t.amount ELSE 0 END), 0) AS REAL), \
-            CAST(COALESCE(SUM(CASE WHEN t.kind = 'expense' THEN t.amount ELSE 0 END), 0) AS REAL) \
-         FROM transactions t \
-         JOIN properties p ON p.id = t.property_id \
-         WHERE (?1 IS NULL OR substr(t.date, 1, 4) = ?1) \
-           AND {EXCLUDE_RENTAL_UTILITIES} \
-         GROUP BY t.property_id"
-    ))
+    let sums = sqlx::query_as::<_, (String, f64, f64)>(
+        "SELECT property_id, \
+            CAST(COALESCE(SUM(CASE WHEN kind = 'income'  THEN amount ELSE 0 END), 0) AS REAL), \
+            CAST(COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS REAL) \
+         FROM transactions \
+         WHERE (?1 IS NULL OR substr(date, 1, 4) = ?1) \
+         GROUP BY property_id",
+    )
     .bind(&year)
     .fetch_all(&st.pool)
     .await?;
@@ -283,10 +287,11 @@ pub async fn overview(
     }
 
     let paid_rows = sqlx::query_as::<_, (String, String, f64)>(&format!(
-        "SELECT property_id, substr(date, 1, 4) AS y, CAST(SUM(amount) AS REAL) \
-         FROM transactions \
+        "SELECT t.property_id, substr(t.date, 1, 4) AS y, CAST(SUM(t.amount) AS REAL) \
+         FROM transactions t \
+         JOIN categories c ON c.id = t.category_id \
          WHERE {RENT_PAID_PREDICATE} \
-         GROUP BY property_id, y"
+         GROUP BY t.property_id, y"
     ))
     .fetch_all(&st.pool)
     .await?;
@@ -353,14 +358,14 @@ pub async fn tax_report(
     .fetch_all(&st.pool)
     .await?;
 
-    let rows = sqlx::query_as::<_, (String, String, String, f64)>(&format!(
-        "SELECT t.property_id, t.kind, t.category, CAST(SUM(t.amount) AS REAL) \
+    let rows = sqlx::query_as::<_, (String, String, String, f64)>(
+        "SELECT t.property_id, t.kind, c.label AS category, CAST(SUM(t.amount) AS REAL) \
          FROM transactions t \
          JOIN properties p ON p.id = t.property_id \
+         JOIN categories c ON c.id = t.category_id \
          WHERE p.kind = 'rental' AND (?1 IS NULL OR substr(t.date, 1, 4) = ?1) \
-           AND {EXCLUDE_RENTAL_UTILITIES} \
-         GROUP BY t.property_id, t.kind, t.category"
-    ))
+         GROUP BY t.property_id, t.kind, c.id",
+    )
     .bind(&year)
     .fetch_all(&st.pool)
     .await?;
@@ -465,9 +470,10 @@ fn portfolio_totals(rows: &[OverviewRow]) -> Vec<PortfolioTotals> {
 
 async fn rent_paid_by_year(st: &AppState, property_id: &str) -> AppResult<HashMap<i32, f64>> {
     let rows = sqlx::query_as::<_, (String, f64)>(&format!(
-        "SELECT substr(date, 1, 4) AS y, CAST(SUM(amount) AS REAL) \
-         FROM transactions \
-         WHERE property_id = ? AND ({RENT_PAID_PREDICATE}) \
+        "SELECT substr(t.date, 1, 4) AS y, CAST(SUM(t.amount) AS REAL) \
+         FROM transactions t \
+         JOIN categories c ON c.id = t.category_id \
+         WHERE t.property_id = ? AND ({RENT_PAID_PREDICATE}) \
          GROUP BY y"
     ))
     .bind(property_id)

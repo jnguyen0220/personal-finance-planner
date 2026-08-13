@@ -2,11 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, formatPhone, formatPhoneInput, type ProviderInput, type Tenant } from "@/lib/api";
+import {
+  api,
+  formatPhone,
+  formatPhoneInput,
+  optionListQueryOptions,
+  type ProviderInput,
+  type Tenant,
+} from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { DeleteButton } from "@/components/ui/DeleteButton";
-
-const KINDS = ["electricity", "water", "gas", "trash", "internet", "other"];
 
 export function ProvidersTab({
   propertyId,
@@ -17,8 +22,11 @@ export function ProvidersTab({
 }) {
   const queryClient = useQueryClient();
   const currentTenants = useMemo(() => tenants.filter((t) => t.is_current), [tenants]);
+  const { data: kinds = [] } = useQuery(optionListQueryOptions("provider_kinds"));
 
-  const [kind, setKind] = useState("electricity");
+  // Default to the first backend-provided kind rather than a hardcoded value.
+  const [kind, setKind] = useState("");
+  const selectedKind = kind || kinds[0] || "";
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [homepage, setHomepage] = useState("");
@@ -39,7 +47,7 @@ export function ProvidersTab({
     setErr(null);
     setSaving(true);
     try {
-      const input: ProviderInput = { kind, name, phone, homepage };
+      const input: ProviderInput = { kind: selectedKind, name, phone, homepage };
       await api.createProvider(propertyId, input);
       setName("");
       setPhone("");
@@ -82,8 +90,8 @@ export function ProvidersTab({
         {err && <p className="mb-3 text-sm text-red-700">{err}</p>}
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Utility">
-            <select className="input" value={kind} onChange={(e) => setKind(e.target.value)}>
-              {KINDS.map((k) => (
+            <select className="input" value={selectedKind} onChange={(e) => setKind(e.target.value)}>
+              {kinds.map((k) => (
                 <option key={k} value={k}>
                   {k[0].toUpperCase() + k.slice(1)}
                 </option>

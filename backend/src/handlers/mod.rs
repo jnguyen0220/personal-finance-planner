@@ -4,6 +4,7 @@ pub mod insurance;
 pub mod leases;
 pub mod messages;
 pub mod notifications;
+pub mod options;
 pub mod properties;
 pub mod providers;
 pub mod settings;
@@ -38,4 +39,23 @@ pub(crate) async fn delete_by_id(
         .rows_affected();
     ensure_found(affected)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Removes an attachment's row and its file from disk, so deleting or replacing
+/// a receipt or document doesn't leave an orphaned upload behind. Best-effort on
+/// the file: a missing one won't fail the caller.
+pub(crate) async fn delete_attachment(st: &AppState, id: &str) -> AppResult<()> {
+    let stored_name =
+        sqlx::query_scalar::<_, String>("SELECT stored_name FROM attachments WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&st.pool)
+            .await?;
+    if let Some(stored_name) = stored_name {
+        sqlx::query("DELETE FROM attachments WHERE id = ?")
+            .bind(id)
+            .execute(&st.pool)
+            .await?;
+        let _ = tokio::fs::remove_file(st.uploads.join(&stored_name)).await;
+    }
+    Ok(())
 }

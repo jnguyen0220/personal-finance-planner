@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id          TEXT PRIMARY KEY,
     property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
     kind        TEXT NOT NULL,
-    category    TEXT NOT NULL DEFAULT 'other',
+    category_id TEXT NOT NULL REFERENCES categories(id),
     amount      REAL NOT NULL,
     date        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -134,15 +134,34 @@ CREATE TABLE IF NOT EXISTS states (
 );
 
 CREATE TABLE IF NOT EXISTS categories (
-    name       TEXT PRIMARY KEY,
-    kind       TEXT NOT NULL,
-    fields     TEXT NOT NULL,
-    rentals    INTEGER NOT NULL,
-    personal   INTEGER NOT NULL,
-    deductible INTEGER NOT NULL
+    id               TEXT PRIMARY KEY,
+    label            TEXT NOT NULL,
+    parent_id        TEXT REFERENCES categories(id) ON DELETE CASCADE,
+    kind             TEXT NOT NULL,
+    fields           TEXT NOT NULL DEFAULT '',
+    deductible       INTEGER NOT NULL DEFAULT 0,
+    applies_rental   INTEGER NOT NULL DEFAULT 1,
+    applies_personal INTEGER NOT NULL DEFAULT 1,
+    selectable       INTEGER NOT NULL DEFAULT 1,
+    counts_as_rent   INTEGER NOT NULL DEFAULT 0,
+    position         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS option_lists (
+    list     TEXT NOT NULL,
+    value    TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (list, value)
+);
+
+-- Idempotency ledger so each lease/insurance expiry texts the contact list once.
+CREATE TABLE IF NOT EXISTS contact_reminders (
+    dedup_key  TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_property ON transactions(property_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
 CREATE INDEX IF NOT EXISTS idx_tenants_property ON tenants(property_id);
 CREATE INDEX IF NOT EXISTS idx_leases_tenant ON leases(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_insurance_property ON insurance_policies(property_id);
@@ -172,9 +191,10 @@ pub async fn init_pool(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
     Ok(pool)
 }
 
-/// Populates the `states` and `categories` reference tables from the canonical
-/// Rust definitions. Runs on every startup but only inserts rows that are
-/// missing, so a fresh database is fully populated and existing data is kept.
+/// Populates the `states`, `categories`, and `option_lists` reference tables
+/// from the canonical Rust definitions. States are kept complete on every
+/// startup, while the editable tables are only seeded when empty so operator
+/// edits (including deletions) are preserved.
 async fn seed_reference_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     for state in crate::states::STATES {
         sqlx::query("INSERT OR IGNORE INTO states (code, name) VALUES (?, ?)")
@@ -183,19 +203,50 @@ async fn seed_reference_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .execute(pool)
             .await?;
     }
-    for category in crate::categories::CATEGORIES {
-        sqlx::query(
-            "INSERT OR IGNORE INTO categories (name, kind, fields, rentals, personal, deductible) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(category.name)
-        .bind(category.kind)
-        .bind(category.fields.join(","))
-        .bind(category.rentals as i64)
-        .bind(category.personal as i64)
-        .bind(category.deductible as i64)
-        .execute(pool)
+
+    let category_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM categories")
+        .fetch_one(pool)
         .await?;
+    if category_count == 0 {
+        for (position, c) in crate::categories::CATEGORIES.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO categories (id, label, parent_id, kind, fields, deductible, \
+                                         applies_rental, applies_personal, selectable, \
+                                         counts_as_rent, position) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(c.id)
+            .bind(c.label)
+            .bind(c.parent_id)
+            .bind(c.kind)
+            .bind(c.fields.join(","))
+            .bind(c.deductible as i64)
+            .bind(c.applies_rental as i64)
+            .bind(c.applies_personal as i64)
+            .bind(c.selectable as i64)
+            .bind(c.counts_as_rent as i64)
+            .bind(position as i64)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    for (list, defaults) in crate::options::LISTS {
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM option_lists WHERE list = ?")
+                .bind(list)
+                .fetch_one(pool)
+                .await?;
+        if count == 0 {
+            for (position, value) in defaults.iter().enumerate() {
+                sqlx::query("INSERT INTO option_lists (list, value, position) VALUES (?, ?, ?)")
+                    .bind(list)
+                    .bind(value)
+                    .bind(position as i64)
+                    .execute(pool)
+                    .await?;
+            }
+        }
     }
 
     // Default sign-off; kept only when the operator hasn't set their own.

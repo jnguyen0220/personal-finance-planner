@@ -25,8 +25,8 @@ pub async fn create(
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let row = sqlx::query_as::<_, Lease>(&format!(
-        "INSERT INTO leases (id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notify_days, notes, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+        "INSERT INTO leases (id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notes, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
     ))
     .bind(&id)
     .bind(&tenant_id)
@@ -35,7 +35,6 @@ pub async fn create(
     .bind(&input.end_date)
     .bind(input.rent_due_day)
     .bind(input.late_fee)
-    .bind(input.notify_days)
     .bind(&input.notes)
     .bind(&now)
     .fetch_one(&st.pool)
@@ -49,7 +48,7 @@ pub async fn update(
     Json(input): Json<LeaseInput>,
 ) -> AppResult<Json<Lease>> {
     let row = sqlx::query_as::<_, Lease>(&format!(
-        "UPDATE leases SET monthly_rent = ?, start_date = ?, end_date = ?, rent_due_day = ?, late_fee = ?, notify_days = ?, notes = ? \
+        "UPDATE leases SET monthly_rent = ?, start_date = ?, end_date = ?, rent_due_day = ?, late_fee = ?, notes = ? \
          WHERE id = ? RETURNING {COLUMNS}"
     ))
     .bind(input.monthly_rent)
@@ -57,7 +56,6 @@ pub async fn update(
     .bind(&input.end_date)
     .bind(input.rent_due_day)
     .bind(input.late_fee)
-    .bind(input.notify_days)
     .bind(&input.notes)
     .bind(&id)
     .fetch_optional(&st.pool)

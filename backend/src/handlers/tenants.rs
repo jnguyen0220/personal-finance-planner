@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::handlers::{delete_by_id, ensure_found};
+use crate::handlers::{delete_attachment, delete_by_id, ensure_found};
 use crate::models::{Lease, Tenant, TenantInput, TenantWithLeases};
 use crate::state::AppState;
 
@@ -102,6 +102,13 @@ pub async fn update(
     Path(id): Path<String>,
     Json(input): Json<TenantInput>,
 ) -> AppResult<Json<TenantWithLeases>> {
+    let old_license = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT driver_license_id FROM tenants WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(&st.pool)
+    .await?
+    .flatten();
     let affected = sqlx::query(
         "UPDATE tenants SET first_name = ?, last_name = ?, email = ?, phone = ?, is_current = ?, notes = ?, driver_license_id = ? WHERE id = ?",
     )
@@ -117,6 +124,12 @@ pub async fn update(
     .await?
     .rows_affected();
     ensure_found(affected)?;
+    // Drop the previous document once it's no longer referenced.
+    if let Some(old) = old_license {
+        if input.driver_license_id.as_deref() != Some(old.as_str()) {
+            delete_attachment(&st, &old).await?;
+        }
+    }
     let row = get_one(&st, &id).await?;
     if row.tenant.is_current {
         clear_other_current(&st, &row.tenant.property_id, &id).await?;
@@ -138,5 +151,16 @@ pub async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<axum::http::StatusCode> {
-    delete_by_id(&st, "tenants", &id).await
+    let license_id = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT driver_license_id FROM tenants WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(&st.pool)
+    .await?
+    .flatten();
+    let status = delete_by_id(&st, "tenants", &id).await?;
+    if let Some(lid) = license_id {
+        delete_attachment(&st, &lid).await?;
+    }
+    Ok(status)
 }

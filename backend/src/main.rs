@@ -7,6 +7,7 @@ mod handlers;
 mod messaging;
 mod models;
 mod notify;
+mod options;
 mod settings;
 mod sms;
 mod state;
@@ -62,6 +63,18 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/categories", get(handlers::categories::list))
+        .route(
+            "/api/admin/categories",
+            get(handlers::categories::list_all).post(handlers::categories::create),
+        )
+        .route(
+            "/api/admin/categories/:name",
+            put(handlers::categories::update).delete(handlers::categories::delete),
+        )
+        .route(
+            "/api/option-lists/:list",
+            get(handlers::options::get).put(handlers::options::put),
+        )
         .route("/api/states", get(handlers::states::list))
         .route(
             "/api/settings",

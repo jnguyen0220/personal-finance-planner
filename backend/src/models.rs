@@ -112,9 +112,6 @@ pub struct LeaseInput {
     pub rent_due_day: Option<i64>,
     #[serde(default)]
     pub late_fee: f64,
-    /// Days before `end_date` to start notifying about the lease ending.
-    #[serde(default = "default_notify_days")]
-    pub notify_days: i64,
     #[serde(default)]
     pub notes: String,
 }
@@ -165,7 +162,8 @@ pub struct Transaction {
     pub id: String,
     pub property_id: String,
     pub kind: String,
-    pub category: String,
+    pub category_id: String,
+    pub category_label: String,
     pub amount: f64,
     pub date: String,
     pub description: String,
@@ -177,9 +175,7 @@ pub struct Transaction {
 
 #[derive(Deserialize)]
 pub struct TransactionInput {
-    pub kind: String,
-    #[serde(default = "default_category")]
-    pub category: String,
+    pub category_id: String,
     pub amount: f64,
     pub date: String,
     #[serde(default)]
@@ -191,17 +187,8 @@ pub struct TransactionInput {
     pub receipt_id: Option<String>,
 }
 
-fn default_category() -> String {
-    "other".to_string()
-}
-
 fn default_borne_by() -> String {
     "landlord".to_string()
-}
-
-/// Default lead time (in days) before an expiry to raise a notification.
-fn default_notify_days() -> i64 {
-    30
 }
 
 #[derive(Serialize, FromRow)]
@@ -317,14 +304,22 @@ pub struct BroadcastRecipient {
 #[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub messaging_enabled: bool,
+    pub property_messaging_enabled: bool,
     pub signature: String,
+    pub lease_notify_days: i64,
+    pub insurance_notify_days: i64,
+    pub contact_phones: Vec<String>,
 }
 
 /// Partial settings update: only the provided fields are written.
 #[derive(Deserialize)]
 pub struct SettingsUpdate {
     pub messaging_enabled: Option<bool>,
+    pub property_messaging_enabled: Option<bool>,
     pub signature: Option<String>,
+    pub lease_notify_days: Option<i64>,
+    pub insurance_notify_days: Option<i64>,
+    pub contact_phones: Option<Vec<String>>,
 }
 
 /// A utility provider (electricity, water, gas, trash, …) for a property, with
@@ -364,9 +359,6 @@ pub struct InsuranceInput {
     pub premium: f64,
     pub start_date: Option<String>,
     pub expiry_date: String,
-    /// Days before `expiry_date` to start notifying about renewal.
-    #[serde(default = "default_notify_days")]
-    pub notify_days: i64,
     #[serde(default)]
     pub notes: String,
 }

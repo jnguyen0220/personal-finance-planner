@@ -17,6 +17,7 @@ pub struct TemplateView {
     kind: String,
     label: String,
     description: String,
+    group: String,
     placeholders: Vec<PlaceholderView>,
     /// Effective body: the stored override, or the built-in default.
     body: String,
@@ -35,6 +36,7 @@ async fn view(st: &AppState, def: &templates::TemplateDef) -> AppResult<Template
         kind: def.kind.to_string(),
         label: def.label.to_string(),
         description: def.description.to_string(),
+        group: def.group.to_string(),
         placeholders: def
             .placeholders
             .iter()

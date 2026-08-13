@@ -19,7 +19,31 @@ const SAMPLE: Record<string, string> = {
   hoa: "\nHOA: Oakwood HOA — 555-0199",
 };
 
+// The `alert` placeholder reads differently per landlord template, so give each
+// a fitting stand-in for its preview.
+const ALERT_SAMPLE: Record<string, string> = {
+  landlord_lease:
+    "Lease ending soon — Jordan Lee\nJordan Lee's lease at 12 Oak Street ends on 2026-12-31.",
+  landlord_insurance:
+    "Insurance expiring soon — 12 Oak Street\nAcme Mutual policy expires on 2026-12-31.",
+};
+
+// Tabs for the two template audiences.
+const TABS: { id: string; label: string; blurb: string }[] = [
+  {
+    id: "tenant",
+    label: "Tenant",
+    blurb: "Sent to tenants for reminders and property info.",
+  },
+  {
+    id: "property",
+    label: "Property",
+    blurb: "Texted to your contact phones about lease and insurance expiry.",
+  },
+];
+
 export function MessageTemplates() {
+  const [tab, setTab] = useState<string>(TABS[0].id);
   const { data: templates = [], isLoading, error } = useQuery({
     queryKey: ["templates"],
     queryFn: api.listTemplates,
@@ -44,11 +68,35 @@ export function MessageTemplates() {
     );
   }
 
+  const active = TABS.find((t) => t.id === tab) ?? TABS[0];
+  const items = templates.filter((t) => t.group === tab);
+
   return (
     <div className="space-y-5">
-      {templates.map((t) => (
-        <TemplateCard key={t.kind} template={t} samples={samples} />
-      ))}
+      <div className="flex gap-2 border-b border-[var(--border)]">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`tab ${tab === t.id ? "tab-active" : ""}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-sm text-[var(--muted)]">{active.blurb}</p>
+      {items.length === 0 ? (
+        <p className="card px-4 py-8 text-center text-sm text-[var(--muted)]">No templates.</p>
+      ) : (
+        items.map((t) => (
+          <TemplateCard
+            key={t.kind}
+            template={t}
+            samples={{ ...samples, alert: ALERT_SAMPLE[t.kind] ?? "" }}
+          />
+        ))
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::dates;
 use crate::handlers::properties::RENT_PAID_PREDICATE;
 use crate::models::Notification;
+use crate::settings;
 
 /// A notification to persist. `dedup_key` keeps derived alerts idempotent, and
 /// `auto_resolve` lets reconciliation remove it once its condition clears.
@@ -80,12 +81,11 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         create(pool, n).await?;
     }
 
-    let existing =
-        sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT id, dedup_key FROM notifications WHERE auto_resolve = 1",
-        )
-        .fetch_all(pool)
-        .await?;
+    let existing = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, dedup_key FROM notifications WHERE auto_resolve = 1",
+    )
+    .fetch_all(pool)
+    .await?;
     for (id, key) in existing {
         if key.map_or(true, |k| !keys.contains(&k)) {
             sqlx::query("DELETE FROM notifications WHERE id = ?")
@@ -114,59 +114,89 @@ struct PolicyRow {
     property_id: String,
     property_name: String,
     provider: String,
+    start_date: Option<String>,
     expiry_date: String,
-    notify_days: i64,
 }
 
-/// Alerts for each property whose latest insurance policy is expired or nearing
-/// expiry within its configured `notify_days` window.
+/// Alerts driven by each property's *current* insurance policy (the one in
+/// effect today): a warning when it is within its `notify_days` window, or an
+/// expired alert once coverage has lapsed and no policy is in effect.
 async fn insurance_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Error> {
+    let notify_days = settings::get_i64(
+        pool,
+        settings::INSURANCE_NOTIFY_DAYS,
+        settings::NOTIFY_DAYS_DEFAULT,
+    )
+    .await?;
     let rows = sqlx::query_as::<_, PolicyRow>(
-        "SELECT i.id, i.property_id, p.name AS property_name, i.provider, i.expiry_date, i.notify_days \
+        "SELECT i.id, i.property_id, p.name AS property_name, i.provider, i.start_date, i.expiry_date \
          FROM insurance_policies i JOIN properties p ON p.id = i.property_id \
          ORDER BY i.expiry_date",
     )
     .fetch_all(pool)
     .await?;
 
-    // Rows ascend by expiry, so the last seen per property is its latest policy.
-    let mut latest: HashMap<String, PolicyRow> = HashMap::new();
+    let today = dates::today().format("%Y-%m-%d").to_string();
+    let mut by_property: HashMap<String, Vec<PolicyRow>> = HashMap::new();
     for row in rows {
-        latest.insert(row.property_id.clone(), row);
+        by_property
+            .entry(row.property_id.clone())
+            .or_default()
+            .push(row);
     }
 
-    Ok(latest
-        .into_values()
-        .filter_map(|row| {
-            let days = dates::days_until(&row.expiry_date);
-            let link = Some(format!("/properties/{}", row.property_id));
-            if days < 0 {
-                Some(NewNotification {
-                    kind: "insurance_expired".into(),
-                    severity: "error".into(),
-                    title: format!("Insurance expired — {}", row.property_name),
-                    body: format!("{} policy expired on {}.", row.provider, row.expiry_date),
-                    link,
-                    property_id: Some(row.property_id),
-                    dedup_key: Some(format!("insurance_expired:{}", row.id)),
-                    auto_resolve: true,
-                })
-            } else if days <= row.notify_days {
-                Some(NewNotification {
+    let mut out = Vec::new();
+    for (property_id, policies) in by_property {
+        let link = Some(format!("/properties/{property_id}"));
+        // The policy in effect today: started, not yet expired, latest start wins.
+        let current = policies
+            .iter()
+            .filter(|p| {
+                p.start_date
+                    .as_deref()
+                    .map_or(true, |s| s <= today.as_str())
+                    && p.expiry_date.as_str() >= today.as_str()
+            })
+            .max_by(|a, b| {
+                a.start_date
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.start_date.as_deref().unwrap_or(""))
+            });
+
+        if let Some(p) = current {
+            let days = dates::days_until(&p.expiry_date);
+            if days <= notify_days {
+                out.push(NewNotification {
                     kind: "insurance_expiring".into(),
                     severity: "warning".into(),
-                    title: format!("Insurance expiring soon — {}", row.property_name),
-                    body: format!("{} policy expires on {}.", row.provider, row.expiry_date),
+                    title: format!("Insurance expiring soon — {}", p.property_name),
+                    body: format!("{} policy expires on {}.", p.provider, p.expiry_date),
                     link,
-                    property_id: Some(row.property_id),
-                    dedup_key: Some(format!("insurance_expiring:{}", row.id)),
+                    property_id: Some(property_id),
+                    dedup_key: Some(format!("insurance_expiring:{}", p.id)),
                     auto_resolve: true,
-                })
-            } else {
-                None
+                });
             }
-        })
-        .collect())
+        } else if let Some(p) = policies
+            .iter()
+            .filter(|p| p.expiry_date.as_str() < today.as_str())
+            .max_by(|a, b| a.expiry_date.cmp(&b.expiry_date))
+        {
+            // No policy is in effect today: coverage has lapsed.
+            out.push(NewNotification {
+                kind: "insurance_expired".into(),
+                severity: "error".into(),
+                title: format!("Insurance expired — {}", p.property_name),
+                body: format!("{} policy expired on {}.", p.provider, p.expiry_date),
+                link,
+                property_id: Some(property_id),
+                dedup_key: Some(format!("insurance_expired:{}", p.id)),
+                auto_resolve: true,
+            });
+        }
+    }
+    Ok(out)
 }
 
 #[derive(sqlx::FromRow)]
@@ -176,68 +206,106 @@ struct LeaseRow {
     tenant_name: String,
     property_id: String,
     property_name: String,
-    end_date: String,
-    notify_days: i64,
+    start_date: Option<String>,
+    end_date: Option<String>,
 }
 
-/// Alerts for current tenants whose latest lease has ended or is ending within
-/// its configured `notify_days` window.
+/// Alerts driven by each current tenant's *current* lease (the one in effect
+/// today): a warning when it is ending within its configured `notify_days`
+/// window, or an ended alert once the lease has lapsed and no lease is in effect.
 async fn lease_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Error> {
+    let notify_days = settings::get_i64(
+        pool,
+        settings::LEASE_NOTIFY_DAYS,
+        settings::NOTIFY_DAYS_DEFAULT,
+    )
+    .await?;
     let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.property_id, p.name AS property_name, l.end_date, l.notify_days \
+        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.property_id, p.name AS property_name, l.start_date, l.end_date \
          FROM leases l \
          JOIN tenants t ON t.id = l.tenant_id \
          JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND l.end_date IS NOT NULL AND l.end_date <> '' \
-         ORDER BY l.end_date",
+         WHERE t.is_current = 1 \
+         ORDER BY l.start_date",
     )
     .fetch_all(pool)
     .await?;
 
-    // Rows ascend by end date, so the last seen per tenant is their latest lease.
-    let mut latest: HashMap<String, LeaseRow> = HashMap::new();
+    let today = dates::today().format("%Y-%m-%d").to_string();
+    let mut by_tenant: HashMap<String, Vec<LeaseRow>> = HashMap::new();
     for row in rows {
-        latest.insert(row.tenant_id.clone(), row);
+        by_tenant
+            .entry(row.tenant_id.clone())
+            .or_default()
+            .push(row);
     }
 
-    Ok(latest
-        .into_values()
-        .filter_map(|row| {
-            let days = dates::days_until(&row.end_date);
-            let link = Some(format!("/properties/{}", row.property_id));
-            if days < 0 {
-                Some(NewNotification {
-                    kind: "lease_expired".into(),
-                    severity: "warning".into(),
-                    title: format!("Lease ended — {}", row.tenant_name),
-                    body: format!(
-                        "{}'s lease at {} ended on {}.",
-                        row.tenant_name, row.property_name, row.end_date
-                    ),
-                    link,
-                    property_id: Some(row.property_id),
-                    dedup_key: Some(format!("lease_expired:{}", row.id)),
-                    auto_resolve: true,
-                })
-            } else if days <= row.notify_days {
-                Some(NewNotification {
+    let mut out = Vec::new();
+    for leases in by_tenant.into_values() {
+        // The lease in effect today: started, not yet ended, latest start wins.
+        let current = leases
+            .iter()
+            .filter(|l| {
+                l.start_date
+                    .as_deref()
+                    .map_or(true, |s| s <= today.as_str())
+                    && l.end_date.as_deref().map_or(true, |e| e >= today.as_str())
+            })
+            .max_by(|a, b| {
+                a.start_date
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.start_date.as_deref().unwrap_or(""))
+            });
+
+        if let Some(l) = current {
+            let Some(end_date) = l.end_date.as_deref().filter(|e| !e.is_empty()) else {
+                continue; // an open-ended lease never triggers an expiry reminder
+            };
+            let days = dates::days_until(end_date);
+            if (0..=notify_days).contains(&days) {
+                out.push(NewNotification {
                     kind: "lease_ending".into(),
                     severity: "warning".into(),
-                    title: format!("Lease ending soon — {}", row.tenant_name),
+                    title: format!("Lease ending soon — {}", l.tenant_name),
                     body: format!(
                         "{}'s lease at {} ends on {}.",
-                        row.tenant_name, row.property_name, row.end_date
+                        l.tenant_name, l.property_name, end_date
                     ),
-                    link,
-                    property_id: Some(row.property_id),
-                    dedup_key: Some(format!("lease_ending:{}", row.id)),
+                    link: Some(format!("/properties/{}", l.property_id)),
+                    property_id: Some(l.property_id.clone()),
+                    dedup_key: Some(format!("lease_ending:{}", l.id)),
                     auto_resolve: true,
-                })
-            } else {
-                None
+                });
             }
-        })
-        .collect())
+        } else if let Some(l) = leases
+            .iter()
+            .filter(|l| l.end_date.as_deref().is_some_and(|e| e < today.as_str()))
+            .max_by(|a, b| {
+                a.end_date
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.end_date.as_deref().unwrap_or(""))
+            })
+        {
+            // No lease is in effect today: the tenant's latest lease has ended.
+            let end_date = l.end_date.as_deref().unwrap_or_default();
+            out.push(NewNotification {
+                kind: "lease_expired".into(),
+                severity: "warning".into(),
+                title: format!("Lease ended — {}", l.tenant_name),
+                body: format!(
+                    "{}'s lease at {} ended on {}.",
+                    l.tenant_name, l.property_name, end_date
+                ),
+                link: Some(format!("/properties/{}", l.property_id)),
+                property_id: Some(l.property_id.clone()),
+                dedup_key: Some(format!("lease_expired:{}", l.id)),
+                auto_resolve: true,
+            });
+        }
+    }
+    Ok(out)
 }
 
 #[derive(sqlx::FromRow)]
@@ -276,7 +344,8 @@ async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Er
     for row in rows {
         let start_m = row.start_date.as_deref().and_then(dates::month_index);
         let end_m = row.end_date.as_deref().and_then(dates::month_index);
-        let covers = start_m.is_some_and(|s| s <= current_m) && end_m.map_or(true, |e| e >= current_m);
+        let covers =
+            start_m.is_some_and(|s| s <= current_m) && end_m.map_or(true, |e| e >= current_m);
         if !covers {
             continue;
         }
@@ -296,10 +365,11 @@ async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Er
     // Rent credited toward the current month, per property.
     let month_prefix = dates::today().format("%Y-%m").to_string();
     let paid_rows = sqlx::query_as::<_, (String, f64)>(&format!(
-        "SELECT property_id, CAST(COALESCE(SUM(amount), 0) AS REAL) \
-         FROM transactions \
-         WHERE substr(date, 1, 7) = ? AND ({RENT_PAID_PREDICATE}) \
-         GROUP BY property_id"
+        "SELECT t.property_id, CAST(COALESCE(SUM(t.amount), 0) AS REAL) \
+         FROM transactions t \
+         JOIN categories c ON c.id = t.category_id \
+         WHERE substr(t.date, 1, 7) = ? AND ({RENT_PAID_PREDICATE}) \
+         GROUP BY t.property_id"
     ))
     .bind(&month_prefix)
     .fetch_all(pool)
