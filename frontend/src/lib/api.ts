@@ -204,6 +204,8 @@ export interface OverviewRow {
   total_expense: number;
   net: number;
   outstanding: number;
+  monthly_rent: number;
+  tenant_name: string | null;
 }
 
 export interface PortfolioTotals {

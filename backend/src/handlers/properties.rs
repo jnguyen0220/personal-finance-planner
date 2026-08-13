@@ -297,6 +297,21 @@ pub async fn overview(
         }
     }
 
+    // Most recently added current tenant per property.
+    let tenant_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT property_id, trim(first_name || ' ' || last_name) AS name \
+         FROM tenants WHERE is_current = 1 ORDER BY created_at ASC",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+    let mut tenant_map: HashMap<String, String> = HashMap::new();
+    for (pid, name) in tenant_rows {
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            tenant_map.insert(pid, name);
+        }
+    }
+
     let empty_paid = HashMap::new();
     let empty_spans: Vec<LeaseSpan> = Vec::new();
     let rows: Vec<OverviewRow> = props
@@ -305,12 +320,15 @@ pub async fn overview(
             let (total_income, total_expense) = sum_map.get(&p.id).copied().unwrap_or((0.0, 0.0));
             let spans = spans_by_prop.get(&p.id).unwrap_or(&empty_spans);
             let pm = paid_map.get(&p.id).unwrap_or(&empty_paid);
-            let outstanding = compute_outstanding(spans, pm, selected_year).outstanding;
+            let balance = compute_outstanding(spans, pm, selected_year);
+            let tenant_name = tenant_map.get(&p.id).cloned();
             OverviewRow {
                 total_income,
                 total_expense,
                 net: total_income - total_expense,
-                outstanding,
+                outstanding: balance.outstanding,
+                monthly_rent: balance.monthly_rent,
+                tenant_name,
                 property: p,
             }
         })

@@ -416,6 +416,8 @@ pub struct OverviewRow {
     pub total_expense: f64,
     pub net: f64,
     pub outstanding: f64,
+    pub monthly_rent: f64,
+    pub tenant_name: Option<String>,
 }
 
 /// Portfolio roll-up for one property kind, computed server-side for the header cards.

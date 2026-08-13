@@ -274,7 +274,8 @@ export default function Home() {
             <thead>
               <tr>
                 <th className="th">Property</th>
-                <th className="th hidden sm:table-cell">Type</th>
+                <th className="th hidden sm:table-cell">Tenant</th>
+                <th className="th text-right">Monthly rent</th>
                 <th className="th text-right">Income</th>
                 <th className="th text-right">Expense</th>
                 <th className="th text-right">Net</th>
@@ -282,7 +283,7 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map(({ property, total_income, total_expense, net, outstanding }) => {
+              {visibleRows.map(({ property, total_income, total_expense, net, outstanding, monthly_rent, tenant_name }) => {
                 const location = formatPropertyAddress(property);
                 return (
                   <tr key={property.id} className="group">
@@ -299,15 +300,18 @@ export default function Home() {
                       </Link>
                     </td>
                     <td className="td hidden sm:table-cell">
-                      <span
-                        className={`badge ${
-                          property.kind === "personal"
-                            ? "bg-violet-100 text-violet-700"
-                            : "bg-indigo-100 text-indigo-700"
-                        }`}
-                      >
-                        {property.kind === "personal" ? "Personal" : "Rental"}
-                      </span>
+                      {tenant_name ? (
+                        <span className="text-sm">{tenant_name}</span>
+                      ) : (
+                        <span className="text-sm text-[var(--muted)]">—</span>
+                      )}
+                    </td>
+                    <td className="td text-right font-semibold tabular-nums">
+                      {property.kind === "rental" && monthly_rent > 0.005 ? (
+                        formatCurrency(monthly_rent)
+                      ) : (
+                        <span className="text-[var(--muted)]">—</span>
+                      )}
                     </td>
                     <td className="td text-right font-semibold tabular-nums text-emerald-600">
                       {formatCurrency(total_income)}
