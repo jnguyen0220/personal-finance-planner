@@ -145,8 +145,8 @@ fn active_lease(leases: &[Lease]) -> Option<Lease> {
         .filter(|l| {
             l.start_date
                 .as_deref()
-                .map_or(true, |s| s <= today.as_str())
-                && l.end_date.as_deref().map_or(true, |e| e >= today.as_str())
+                .is_none_or(|s| s <= today.as_str())
+                && l.end_date.as_deref().is_none_or(|e| e >= today.as_str())
         })
         .max_by(|a, b| {
             a.start_date

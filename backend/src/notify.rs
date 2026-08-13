@@ -87,7 +87,7 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .fetch_all(pool)
     .await?;
     for (id, key) in existing {
-        if key.map_or(true, |k| !keys.contains(&k)) {
+        if key.is_none_or(|k| !keys.contains(&k)) {
             sqlx::query("DELETE FROM notifications WHERE id = ?")
                 .bind(&id)
                 .execute(pool)
@@ -154,7 +154,7 @@ async fn insurance_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sql
             .filter(|p| {
                 p.start_date
                     .as_deref()
-                    .map_or(true, |s| s <= today.as_str())
+                    .is_none_or(|s| s <= today.as_str())
                     && p.expiry_date.as_str() >= today.as_str()
             })
             .max_by(|a, b| {
@@ -248,8 +248,8 @@ async fn lease_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::E
             .filter(|l| {
                 l.start_date
                     .as_deref()
-                    .map_or(true, |s| s <= today.as_str())
-                    && l.end_date.as_deref().map_or(true, |e| e >= today.as_str())
+                    .is_none_or(|s| s <= today.as_str())
+                    && l.end_date.as_deref().is_none_or(|e| e >= today.as_str())
             })
             .max_by(|a, b| {
                 a.start_date
@@ -345,7 +345,7 @@ async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Er
         let start_m = row.start_date.as_deref().and_then(dates::month_index);
         let end_m = row.end_date.as_deref().and_then(dates::month_index);
         let covers =
-            start_m.is_some_and(|s| s <= current_m) && end_m.map_or(true, |e| e >= current_m);
+            start_m.is_some_and(|s| s <= current_m) && end_m.is_none_or(|e| e >= current_m);
         if !covers {
             continue;
         }
@@ -353,7 +353,7 @@ async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Er
         let keep = active
             .get(&row.tenant_id)
             .and_then(|ex| ex.start_date.as_deref().and_then(dates::month_index))
-            .map_or(true, |ex_start| this_start >= ex_start);
+            .is_none_or(|ex_start| this_start >= ex_start);
         if keep {
             active.insert(row.tenant_id.clone(), row);
         }

@@ -17,8 +17,7 @@ const COLUMNS: &str = "id, name, address, city, state, zip, kind, reminders_enab
 /// Rent credited in a year: income categories flagged `counts_as_rent`, plus any
 /// tenant-borne expense (which the tenant deducts from rent). Single source of
 /// truth for the "paid" figure. Assumes `transactions t` JOIN `categories c`.
-pub(crate) const RENT_PAID_PREDICATE: &str =
-    "(c.counts_as_rent = 1 OR t.borne_by = 'tenant')";
+pub(crate) const RENT_PAID_PREDICATE: &str = "(c.counts_as_rent = 1 OR t.borne_by = 'tenant')";
 
 pub async fn get(State(st): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Property>> {
     let row =
@@ -209,7 +208,7 @@ pub(crate) async fn outstanding_for(
         None => return Ok(compute_outstanding(&[], &HashMap::new(), selected_year)),
     };
 
-    let lease_rows = sqlx::query_as::<_, (f64, Option<String>, Option<String>, Option<i64>)>(
+    let lease_rows = sqlx::query_as::<_, LeaseRow>(
         "SELECT monthly_rent, start_date, end_date, rent_due_day FROM leases WHERE tenant_id = ?",
     )
     .bind(&tenant_id)
@@ -485,6 +484,9 @@ async fn rent_paid_by_year(st: &AppState, property_id: &str) -> AppResult<HashMa
         .collect())
 }
 
+/// A lease row as fetched for outstanding-rent math: rent, start/end dates, due day.
+type LeaseRow = (f64, Option<String>, Option<String>, Option<i64>);
+
 /// A lease reduced to absolute month indices (year*12 + month-1) and its rent.
 struct LeaseSpan {
     start: i32,
@@ -509,9 +511,7 @@ fn lease_span(
     })
 }
 
-fn lease_spans_from(
-    rows: Vec<(f64, Option<String>, Option<String>, Option<i64>)>,
-) -> Vec<LeaseSpan> {
+fn lease_spans_from(rows: Vec<LeaseRow>) -> Vec<LeaseSpan> {
     rows.into_iter()
         .filter_map(|(rent, sd, ed, due)| lease_span(rent, sd.as_deref(), ed.as_deref(), due))
         .collect()
@@ -544,7 +544,7 @@ fn compute_outstanding(
     let rent_for_month = |m: i32| -> f64 {
         spans
             .iter()
-            .filter(|s| s.start <= m && s.end.map_or(true, |e| e >= m))
+            .filter(|s| s.start <= m && s.end.is_none_or(|e| e >= m))
             .max_by_key(|s| s.start)
             .map(|s| s.rent)
             .unwrap_or(0.0)
@@ -555,7 +555,7 @@ fn compute_outstanding(
     let current_m = current_month_index();
     let due_day_now = spans
         .iter()
-        .filter(|s| s.start <= current_m && s.end.map_or(true, |e| e >= current_m))
+        .filter(|s| s.start <= current_m && s.end.is_none_or(|e| e >= current_m))
         .max_by_key(|s| s.start)
         .and_then(|s| s.rent_due_day);
     let cap = match due_day_now {
