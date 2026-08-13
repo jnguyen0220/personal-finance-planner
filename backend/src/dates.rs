@@ -38,3 +38,9 @@ pub fn current_month_index() -> i32 {
     let now = today();
     now.year() * 12 + (now.month() as i32 - 1)
 }
+
+/// Day of the current month (1–31, UTC).
+pub fn current_day_of_month() -> i64 {
+    use chrono::Datelike;
+    today().day() as i64
+}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, statesQueryOptions, type Property, type PropertyKind } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
+import { Switch } from "@/components/ui/Switch";
 import { Modal } from "@/components/ui/Modal";
 
 export function PropertyEditForm({
@@ -27,6 +28,7 @@ export function PropertyEditForm({
   const [hoaPhone, setHoaPhone] = useState(property.hoa_phone);
   const [hoaEmail, setHoaEmail] = useState(property.hoa_email);
   const [hoaWebpage, setHoaWebpage] = useState(property.hoa_webpage);
+  const [remindersEnabled, setRemindersEnabled] = useState(property.reminders_enabled);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"details" | "hoa">("details");
@@ -51,6 +53,7 @@ export function PropertyEditForm({
         hoa_phone: hoaPhone,
         hoa_email: hoaEmail,
         hoa_webpage: hoaWebpage,
+        reminders_enabled: remindersEnabled,
       });
       await onSaved();
     } catch (e) {
@@ -118,6 +121,20 @@ export function PropertyEditForm({
             <textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
         </div>
+        {kind === "rental" && (
+          <div className="mt-3">
+            <Field label="Automated reminders">
+              <label className="flex h-[38px] cursor-pointer items-center gap-3">
+                <Switch checked={remindersEnabled} onChange={setRemindersEnabled} />
+                <span className="text-sm text-[var(--muted)]">
+                  {remindersEnabled
+                    ? "Current tenant receives rent & lease reminders"
+                    : "Paused — no automated texts"}
+                </span>
+              </label>
+            </Field>
+          </div>
+        )}
       </div>
 
       <div className={tab === "hoa" ? "" : "hidden"}>

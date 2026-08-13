@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type ProviderInput, type Tenant } from "@/lib/api";
+import { api, formatPhone, type ProviderInput, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { DeleteButton } from "@/components/ui/DeleteButton";
 
@@ -118,7 +118,7 @@ export function ProvidersTab({
                 {currentTenants.map((t) => (
                   <option key={t.id} value={t.id}>
                     {`${t.first_name} ${t.last_name}`.trim()}
-                    {t.phone ? ` · ${t.phone}` : " · no phone"}
+                    {t.phone ? ` · ${formatPhone(t.phone)}` : " · no phone"}
                   </option>
                 ))}
               </select>
@@ -165,30 +165,31 @@ export function ProvidersTab({
       {providers.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-[var(--muted)]">No providers yet.</p>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+        <div className="table-card">
+          <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-[var(--border)] bg-[var(--background)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-                <th className="px-4 py-3 font-medium">Utility</th>
-                <th className="px-4 py-3 font-medium">Provider</th>
-                <th className="px-4 py-3 font-medium">Phone</th>
-                <th className="px-4 py-3 font-medium">Homepage</th>
-                <th className="px-4 py-3" />
+              <tr>
+                <th className="th">Utility</th>
+                <th className="th">Provider</th>
+                <th className="th hidden md:table-cell">Phone</th>
+                <th className="th hidden lg:table-cell">Homepage</th>
+                <th className="th" />
               </tr>
             </thead>
             <tbody>
               {providers.map((p) => (
-                <tr key={p.id} className="border-b border-[var(--border)] last:border-0">
-                  <td className="px-4 py-3 capitalize">{p.kind}</td>
-                  <td className="px-4 py-3 font-medium">{p.name}</td>
-                  <td className="px-4 py-3 text-[var(--muted)]">{p.phone || "—"}</td>
-                  <td className="px-4 py-3">
+                <tr key={p.id}>
+                  <td className="td capitalize">{p.kind}</td>
+                  <td className="td font-medium">{p.name}</td>
+                  <td className="td hidden whitespace-nowrap text-[var(--muted)] md:table-cell">{p.phone ? formatPhone(p.phone) : "—"}</td>
+                  <td className="td hidden max-w-[18rem] lg:table-cell">
                     {p.homepage ? (
                       <a
                         href={p.homepage}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-indigo-600 hover:underline"
+                        className="block truncate text-indigo-600 hover:underline"
                       >
                         {p.homepage}
                       </a>
@@ -196,13 +197,14 @@ export function ProvidersTab({
                       "—"
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="td text-right">
                     <DeleteButton onDelete={() => removeProvider(p.id)} />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

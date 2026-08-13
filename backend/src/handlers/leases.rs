@@ -8,7 +8,7 @@ use crate::models::{Lease, LeaseInput};
 use crate::state::AppState;
 
 const COLUMNS: &str =
-    "id, tenant_id, monthly_rent, start_date, end_date, payment_date, late_fee, notes, created_at";
+    "id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notes, created_at";
 
 pub async fn create(
     State(st): State<AppState>,
@@ -25,7 +25,7 @@ pub async fn create(
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let row = sqlx::query_as::<_, Lease>(&format!(
-        "INSERT INTO leases (id, tenant_id, monthly_rent, start_date, end_date, payment_date, late_fee, notify_days, notes, created_at) \
+        "INSERT INTO leases (id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notify_days, notes, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
     ))
     .bind(&id)
@@ -33,7 +33,7 @@ pub async fn create(
     .bind(input.monthly_rent)
     .bind(&input.start_date)
     .bind(&input.end_date)
-    .bind(&input.payment_date)
+    .bind(input.rent_due_day)
     .bind(input.late_fee)
     .bind(input.notify_days)
     .bind(&input.notes)
@@ -49,13 +49,13 @@ pub async fn update(
     Json(input): Json<LeaseInput>,
 ) -> AppResult<Json<Lease>> {
     let row = sqlx::query_as::<_, Lease>(&format!(
-        "UPDATE leases SET monthly_rent = ?, start_date = ?, end_date = ?, payment_date = ?, late_fee = ?, notify_days = ?, notes = ? \
+        "UPDATE leases SET monthly_rent = ?, start_date = ?, end_date = ?, rent_due_day = ?, late_fee = ?, notify_days = ?, notes = ? \
          WHERE id = ? RETURNING {COLUMNS}"
     ))
     .bind(input.monthly_rent)
     .bind(&input.start_date)
     .bind(&input.end_date)
-    .bind(&input.payment_date)
+    .bind(input.rent_due_day)
     .bind(input.late_fee)
     .bind(input.notify_days)
     .bind(&input.notes)

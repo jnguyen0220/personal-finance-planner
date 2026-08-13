@@ -1,6 +1,6 @@
 mod categories;
-mod db;
 mod dates;
+mod db;
 mod error;
 mod etag;
 mod handlers;
@@ -11,6 +11,7 @@ mod settings;
 mod sms;
 mod state;
 mod states;
+mod templates;
 
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
@@ -32,8 +33,7 @@ async fn main() {
         )
         .init();
 
-    let data_dir =
-        PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()));
+    let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "data".to_string()));
     let uploads = data_dir.join("uploads");
     std::fs::create_dir_all(&uploads).expect("failed to create uploads dir");
 
@@ -66,6 +66,11 @@ async fn main() {
         .route(
             "/api/settings",
             get(handlers::settings::get).put(handlers::settings::update),
+        )
+        .route("/api/message-templates", get(handlers::templates::list))
+        .route(
+            "/api/message-templates/:kind",
+            put(handlers::templates::update),
         )
         .route("/api/notifications", get(handlers::notifications::list))
         .route(
@@ -126,7 +131,15 @@ async fn main() {
             "/api/properties/:id/messages",
             get(handlers::messages::list_for_property),
         )
-        .route("/api/tenants/:id/messages", post(handlers::messages::create))
+        .route("/api/broadcast", post(handlers::messages::broadcast))
+        .route(
+            "/api/broadcast/recipients",
+            get(handlers::messages::recipients),
+        )
+        .route(
+            "/api/tenants/:id/messages",
+            post(handlers::messages::create),
+        )
         .route(
             "/api/tenants/:id/messages/providers",
             post(handlers::messages::send_providers),

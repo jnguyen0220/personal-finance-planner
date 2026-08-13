@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, categoriesQueryOptions, formatCurrency, formatPropertyAddress } from "@/lib/api";
+import { api, categoriesQueryOptions, formatCurrency, formatPhone, formatPropertyAddress } from "@/lib/api";
 import { TransactionsTab } from "@/features/transactions/TransactionsTab";
 import { TenantsTab } from "@/features/tenants/TenantsTab";
 import { InsuranceTab } from "@/features/insurance/InsuranceTab";
@@ -188,7 +188,7 @@ export default function PropertyDetail() {
             {property.hoa_name && <span className="font-medium">{property.hoa_name}</span>}
             {property.hoa_phone && (
               <a href={`tel:${property.hoa_phone}`} className="text-indigo-600 hover:underline">
-                {property.hoa_phone}
+                {formatPhone(property.hoa_phone)}
               </a>
             )}
             {property.hoa_email && (

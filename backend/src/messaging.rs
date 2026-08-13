@@ -81,16 +81,19 @@ struct TenantRow {
     name: String,
     phone: String,
     property_id: String,
-    property_name: String,
+    address: String,
+    city: String,
+    state: String,
+    zip: String,
 }
 
 /// Reminds each rental's current tenant of any outstanding balance, at most once
 /// per calendar month (the `dedup_key` carries the year-month).
 async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error> {
     let rows = sqlx::query_as::<_, TenantRow>(
-        "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, t.property_id, p.name AS property_name \
+        "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, t.property_id, p.address, p.city, p.state, p.zip \
          FROM tenants t JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND t.notifications_enabled = 1 AND p.kind = 'rental' AND t.phone <> '' \
+         WHERE t.is_current = 1 AND p.reminders_enabled = 1 AND p.kind = 'rental' AND t.phone <> '' \
          ORDER BY t.created_at",
     )
     .fetch_all(&st.pool)
@@ -108,6 +111,8 @@ async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error
         .parse()
         .unwrap_or(1970);
     let month = chrono::Utc::now().format("%Y-%m").to_string();
+    let template = crate::templates::body(&st.pool, "outstanding_balance").await?;
+    let signature = crate::templates::signature_value(&st.pool).await?;
 
     let mut out = Vec::new();
     for t in latest.into_values() {
@@ -118,10 +123,18 @@ async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error
         if balance > 0.005 {
             out.push(Pending {
                 kind: "outstanding_balance".into(),
-                body: format!(
-                    "Hi {}, our records show an outstanding balance of ${:.2} for {} at {}. \
-                     Please arrange payment at your earliest convenience. Thank you.",
-                    t.name, balance, year, t.property_name
+                body: crate::templates::render(
+                    &template,
+                    &[
+                        ("tenant_name", t.name.clone()),
+                        ("address", t.address.clone()),
+                        ("city", t.city.clone()),
+                        ("state", t.state.clone()),
+                        ("zip", t.zip.clone()),
+                        ("balance", format!("${:.2}", balance)),
+                        ("year", year.to_string()),
+                        ("signature", signature.clone()),
+                    ],
                 ),
                 dedup_key: format!("msg:outstanding_balance:{}:{}", t.id, month),
                 to_phone: t.phone,
@@ -140,7 +153,10 @@ struct LeaseRow {
     tenant_name: String,
     phone: String,
     property_id: String,
-    property_name: String,
+    address: String,
+    city: String,
+    state: String,
+    zip: String,
     end_date: String,
     notify_days: i64,
 }
@@ -149,11 +165,11 @@ struct LeaseRow {
 /// window, once per lease.
 async fn lease_expiring_messages(pool: &SqlitePool) -> Result<Vec<Pending>, sqlx::Error> {
     let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.name AS property_name, l.end_date, l.notify_days \
+        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.address, p.city, p.state, p.zip, l.end_date, l.notify_days \
          FROM leases l \
          JOIN tenants t ON t.id = l.tenant_id \
          JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND t.notifications_enabled = 1 AND t.phone <> '' AND l.end_date IS NOT NULL AND l.end_date <> '' \
+         WHERE t.is_current = 1 AND p.reminders_enabled = 1 AND t.phone <> '' AND l.end_date IS NOT NULL AND l.end_date <> '' \
          ORDER BY l.end_date",
     )
     .fetch_all(pool)
@@ -165,16 +181,25 @@ async fn lease_expiring_messages(pool: &SqlitePool) -> Result<Vec<Pending>, sqlx
         latest.insert(row.tenant_id.clone(), row);
     }
 
+    let template = crate::templates::body(pool, "lease_expiring").await?;
+    let signature = crate::templates::signature_value(pool).await?;
     Ok(latest
         .into_values()
         .filter_map(|row| {
             let days = dates::days_until(&row.end_date);
             (days >= 0 && days <= row.notify_days).then(|| Pending {
                 kind: "lease_expiring".into(),
-                body: format!(
-                    "Hi {}, your lease at {} is set to expire on {}. \
-                     Please contact us to discuss renewal.",
-                    row.tenant_name, row.property_name, row.end_date
+                body: crate::templates::render(
+                    &template,
+                    &[
+                        ("tenant_name", row.tenant_name.clone()),
+                        ("address", row.address.clone()),
+                        ("city", row.city.clone()),
+                        ("state", row.state.clone()),
+                        ("zip", row.zip.clone()),
+                        ("end_date", row.end_date.clone()),
+                        ("signature", signature.clone()),
+                    ],
                 ),
                 dedup_key: format!("msg:lease_expiring:{}", row.id),
                 to_phone: row.phone,

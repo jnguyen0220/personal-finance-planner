@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::dates;
+use crate::handlers::properties::RENT_PAID_PREDICATE;
 use crate::models::Notification;
 
 /// A notification to persist. `dedup_key` keeps derived alerts idempotent, and
@@ -103,6 +104,7 @@ async fn collect_derived(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx
     let mut out = Vec::new();
     out.extend(insurance_alerts(pool).await?);
     out.extend(lease_alerts(pool).await?);
+    out.extend(rent_alerts(pool).await?);
     Ok(out)
 }
 
@@ -234,6 +236,101 @@ async fn lease_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::E
             } else {
                 None
             }
+        })
+        .collect())
+}
+
+#[derive(sqlx::FromRow)]
+struct RentDueRow {
+    id: String,
+    tenant_id: String,
+    tenant_name: String,
+    property_id: String,
+    property_name: String,
+    monthly_rent: f64,
+    rent_due_day: i64,
+    start_date: Option<String>,
+    end_date: Option<String>,
+}
+
+/// Alerts for current tenants whose rent for the current month is past its
+/// due day and still unpaid. Keyed per month so a fresh alert is raised each
+/// month and cleared once payment lands or the month rolls over.
+async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, RentDueRow>(
+        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, \
+                t.property_id, p.name AS property_name, l.monthly_rent, l.rent_due_day, \
+                l.start_date, l.end_date \
+         FROM leases l \
+         JOIN tenants t ON t.id = l.tenant_id \
+         JOIN properties p ON p.id = t.property_id \
+         WHERE t.is_current = 1 AND l.rent_due_day IS NOT NULL AND l.monthly_rent > 0 \
+         ORDER BY l.start_date",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Keep only the lease covering the current month, latest start wins per tenant.
+    let current_m = dates::current_month_index();
+    let mut active: HashMap<String, RentDueRow> = HashMap::new();
+    for row in rows {
+        let start_m = row.start_date.as_deref().and_then(dates::month_index);
+        let end_m = row.end_date.as_deref().and_then(dates::month_index);
+        let covers = start_m.is_some_and(|s| s <= current_m) && end_m.map_or(true, |e| e >= current_m);
+        if !covers {
+            continue;
+        }
+        let this_start = start_m.unwrap_or(i32::MIN);
+        let keep = active
+            .get(&row.tenant_id)
+            .and_then(|ex| ex.start_date.as_deref().and_then(dates::month_index))
+            .map_or(true, |ex_start| this_start >= ex_start);
+        if keep {
+            active.insert(row.tenant_id.clone(), row);
+        }
+    }
+    if active.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Rent credited toward the current month, per property.
+    let month_prefix = dates::today().format("%Y-%m").to_string();
+    let paid_rows = sqlx::query_as::<_, (String, f64)>(&format!(
+        "SELECT property_id, CAST(COALESCE(SUM(amount), 0) AS REAL) \
+         FROM transactions \
+         WHERE substr(date, 1, 7) = ? AND ({RENT_PAID_PREDICATE}) \
+         GROUP BY property_id"
+    ))
+    .bind(&month_prefix)
+    .fetch_all(pool)
+    .await?;
+    let paid: HashMap<String, f64> = paid_rows.into_iter().collect();
+
+    let today_day = dates::current_day_of_month();
+    Ok(active
+        .into_values()
+        .filter_map(|row| {
+            if today_day <= row.rent_due_day {
+                return None;
+            }
+            let paid_amt = paid.get(&row.property_id).copied().unwrap_or(0.0);
+            let remaining = row.monthly_rent - paid_amt;
+            if remaining <= 0.005 {
+                return None;
+            }
+            Some(NewNotification {
+                kind: "rent_overdue".into(),
+                severity: "warning".into(),
+                title: format!("Rent overdue — {}", row.tenant_name),
+                body: format!(
+                    "{}'s rent at {} was due on day {} and ${:.2} is still unpaid this month.",
+                    row.tenant_name, row.property_name, row.rent_due_day, remaining
+                ),
+                link: Some(format!("/properties/{}", row.property_id)),
+                property_id: Some(row.property_id),
+                dedup_key: Some(format!("rent_overdue:{}:{}", row.id, month_prefix)),
+                auto_resolve: true,
+            })
         })
         .collect())
 }

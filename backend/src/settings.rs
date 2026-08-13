@@ -5,6 +5,12 @@ use sqlx::SqlitePool;
 /// Master switch for the automated tenant messaging job.
 pub const MESSAGING_ENABLED: &str = "messaging_enabled";
 
+/// Signature/sign-off appended to automated messages via the `{signature}` token.
+pub const SIGNATURE: &str = "signature";
+
+/// Seeded as the signature on a fresh database.
+pub const SIGNATURE_DEFAULT: &str = "Landlord";
+
 pub async fn get_bool(pool: &SqlitePool, key: &str, default: bool) -> Result<bool, sqlx::Error> {
     let value = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
         .bind(key)
@@ -26,5 +32,32 @@ pub async fn set_bool(pool: &SqlitePool, key: &str, value: bool) -> Result<(), s
     .bind(if value { "true" } else { "false" })
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+pub async fn get_string(pool: &SqlitePool, key: &str) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn set_string(pool: &SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES (?, ?) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete(pool: &SqlitePool, key: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(key)
+        .execute(pool)
+        .await?;
     Ok(())
 }

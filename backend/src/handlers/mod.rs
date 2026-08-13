@@ -8,6 +8,7 @@ pub mod properties;
 pub mod providers;
 pub mod settings;
 pub mod states;
+pub mod templates;
 pub mod tenants;
 pub mod transactions;
 

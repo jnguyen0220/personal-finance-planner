@@ -11,6 +11,7 @@ export interface Property {
   state: string;
   zip: string;
   kind: PropertyKind;
+  reminders_enabled: boolean;
   purchase_date: string | null;
   notes: string;
   hoa_name: string;
@@ -27,6 +28,7 @@ export interface PropertyInput {
   state?: string;
   zip?: string;
   kind?: PropertyKind;
+  reminders_enabled?: boolean;
   purchase_date?: string | null;
   notes?: string;
   hoa_name?: string;
@@ -41,7 +43,7 @@ export interface Lease {
   monthly_rent: number;
   start_date: string | null;
   end_date: string | null;
-  payment_date: string | null;
+  rent_due_day: number | null;
   late_fee: number;
   notes: string;
   created_at: string;
@@ -51,7 +53,7 @@ export interface LeaseInput {
   monthly_rent?: number;
   start_date?: string | null;
   end_date?: string | null;
-  payment_date?: string | null;
+  rent_due_day?: number | null;
   late_fee?: number;
   notify_days?: number;
   notes?: string;
@@ -65,7 +67,6 @@ export interface Tenant {
   email: string;
   phone: string;
   is_current: boolean;
-  notifications_enabled: boolean;
   notes: string;
   driver_license_id: string | null;
   created_at: string;
@@ -78,13 +79,41 @@ export function tenantName(t: Pick<Tenant, "first_name" | "last_name">): string 
   return `${t.first_name} ${t.last_name}`.trim();
 }
 
+/// The tenant's most recent lease by start date, falling back to creation
+/// order when start dates are missing. Returns null when there are no leases.
+export function latestLease(leases: Lease[]): Lease | null {
+  if (leases.length === 0) return null;
+  return leases.reduce((latest, lease) => {
+    const a = lease.start_date ?? lease.created_at;
+    const b = latest.start_date ?? latest.created_at;
+    return a > b ? lease : latest;
+  });
+}
+
+/// Format a day-of-month (1–31) with an ordinal suffix, e.g. "1st", "5th".
+export function formatDayOfMonth(day: number | null): string | null {
+  if (day == null) return null;
+  const n = day;
+  if (!Number.isFinite(n)) return String(day);
+  const suffix =
+    n % 100 >= 11 && n % 100 <= 13
+      ? "th"
+      : n % 10 === 1
+        ? "st"
+        : n % 10 === 2
+          ? "nd"
+          : n % 10 === 3
+            ? "rd"
+            : "th";
+  return `${n}${suffix}`;
+}
+
 export interface TenantInput {
   first_name: string;
   last_name?: string;
   email?: string;
   phone?: string;
   is_current?: boolean;
-  notifications_enabled?: boolean;
   notes?: string;
   driver_license_id?: string | null;
 }
@@ -265,8 +294,39 @@ export interface MessageInput {
   body: string;
 }
 
+/// Delivery summary returned after broadcasting to all current tenants.
+export interface BroadcastResult {
+  total: number;
+  sent: number;
+  failed: number;
+}
+
+/// A current tenant a broadcast would reach.
+export interface BroadcastRecipient {
+  id: string;
+  name: string;
+  phone: string;
+  property_name: string;
+}
+
 export interface Settings {
   messaging_enabled: boolean;
+  signature: string;
+}
+
+export interface TemplatePlaceholder {
+  token: string;
+  description: string;
+}
+
+export interface MessageTemplate {
+  kind: string;
+  label: string;
+  description: string;
+  placeholders: TemplatePlaceholder[];
+  body: string;
+  default_body: string;
+  is_custom: boolean;
 }
 
 /// A utility provider a tenant contacts to set up service.
@@ -381,8 +441,15 @@ export const api = {
     request<void>(`/notifications/${id}/dismiss`, { method: "POST" }),
 
   getSettings: () => request<Settings>("/settings"),
-  updateSettings: (input: Settings) =>
+  updateSettings: (input: Partial<Settings>) =>
     request<Settings>("/settings", { method: "PUT", body: JSON.stringify(input) }),
+
+  listTemplates: () => request<MessageTemplate[]>("/message-templates"),
+  updateTemplate: (kind: string, body: string) =>
+    request<MessageTemplate>(`/message-templates/${kind}`, {
+      method: "PUT",
+      body: JSON.stringify({ body }),
+    }),
 
   listTenants: (propertyId: string) =>
     request<Tenant[]>(`/properties/${propertyId}/tenants`),
@@ -446,6 +513,14 @@ export const api = {
   previewProviders: (propertyId: string) =>
     request<{ body: string }>(`/properties/${propertyId}/providers/message`),
 
+  broadcast: (body: string) =>
+    request<BroadcastResult>("/broadcast", {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  broadcastRecipients: () =>
+    request<BroadcastRecipient[]>("/broadcast/recipients"),
+
   listProviders: (propertyId: string) =>
     request<Provider[]>(`/properties/${propertyId}/providers`),
   createProvider: (propertyId: string, input: ProviderInput) =>
@@ -471,6 +546,17 @@ export function formatCurrency(value: number): string {
     style: "currency",
     currency: "USD",
   }).format(value);
+}
+
+/// Format a US phone number as "(123) 456-7890", preserving any extra input
+/// (like a leading "+1" or an extension) that doesn't fit the 10-digit pattern.
+export function formatPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (local.length === 10) {
+    return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`;
+  }
+  return phone;
 }
 
 /// Single source of truth for a property's display address: "street, city, ST zip".

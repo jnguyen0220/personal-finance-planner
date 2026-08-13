@@ -3,7 +3,7 @@ use axum::Json;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::dates::{current_month_index, current_year, month_index};
+use crate::dates::{current_day_of_month, current_month_index, current_year, month_index};
 use crate::error::{AppError, AppResult};
 use crate::handlers::delete_by_id;
 use crate::models::{
@@ -12,7 +12,7 @@ use crate::models::{
 };
 use crate::state::AppState;
 
-const COLUMNS: &str = "id, name, address, city, state, zip, kind, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at";
+const COLUMNS: &str = "id, name, address, city, state, zip, kind, reminders_enabled, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at";
 
 /// Utilities on a rental are treated as pass-through income, so the matching
 /// expense is excluded from every income/expense rollup. Single source of truth
@@ -22,17 +22,16 @@ const EXCLUDE_RENTAL_UTILITIES: &str =
 
 /// Rent credited in a year: rent income plus tenant-borne expenses (which the
 /// tenant deducts from rent). Single source of truth for the "paid" figure.
-const RENT_PAID_PREDICATE: &str =
+pub(crate) const RENT_PAID_PREDICATE: &str =
     "(category = 'rent' AND kind = 'income') OR (kind = 'expense' AND borne_by = 'tenant')";
 
 pub async fn get(State(st): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Property>> {
-    let row = sqlx::query_as::<_, Property>(&format!(
-        "SELECT {COLUMNS} FROM properties WHERE id = ?"
-    ))
-    .bind(&id)
-    .fetch_optional(&st.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let row =
+        sqlx::query_as::<_, Property>(&format!("SELECT {COLUMNS} FROM properties WHERE id = ?"))
+            .bind(&id)
+            .fetch_optional(&st.pool)
+            .await?
+            .ok_or(AppError::NotFound)?;
     Ok(Json(row))
 }
 
@@ -47,8 +46,8 @@ pub async fn create(
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let row = sqlx::query_as::<_, Property>(&format!(
-        "INSERT INTO properties (id, name, address, city, state, zip, kind, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+        "INSERT INTO properties (id, name, address, city, state, zip, kind, reminders_enabled, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
     ))
     .bind(&id)
     .bind(input.name.trim())
@@ -57,6 +56,7 @@ pub async fn create(
     .bind(&input.state)
     .bind(&input.zip)
     .bind(&input.kind)
+    .bind(input.reminders_enabled)
     .bind(&input.purchase_date)
     .bind(&input.notes)
     .bind(&input.hoa_name)
@@ -76,7 +76,7 @@ pub async fn update(
 ) -> AppResult<Json<Property>> {
     validate_zip(&input.zip)?;
     let row = sqlx::query_as::<_, Property>(&format!(
-        "UPDATE properties SET name = ?, address = ?, city = ?, state = ?, zip = ?, kind = ?, purchase_date = ?, notes = ?, hoa_name = ?, hoa_phone = ?, hoa_email = ?, hoa_webpage = ? \
+        "UPDATE properties SET name = ?, address = ?, city = ?, state = ?, zip = ?, kind = ?, reminders_enabled = ?, purchase_date = ?, notes = ?, hoa_name = ?, hoa_phone = ?, hoa_email = ?, hoa_webpage = ? \
          WHERE id = ? RETURNING {COLUMNS}"
     ))
     .bind(input.name.trim())
@@ -85,6 +85,7 @@ pub async fn update(
     .bind(&input.state)
     .bind(&input.zip)
     .bind(&input.kind)
+    .bind(input.reminders_enabled)
     .bind(&input.purchase_date)
     .bind(&input.notes)
     .bind(&input.hoa_name)
@@ -199,28 +200,18 @@ pub(crate) async fn outstanding_for(
     .await?;
     let tenant_id = match tenant_id {
         Some(t) => t,
-        None => {
-            return Ok(compute_outstanding(
-                &[],
-                &HashMap::new(),
-                selected_year,
-            ))
-        }
+        None => return Ok(compute_outstanding(&[], &HashMap::new(), selected_year)),
     };
 
-    let lease_rows = sqlx::query_as::<_, (f64, Option<String>, Option<String>)>(
-        "SELECT monthly_rent, start_date, end_date FROM leases WHERE tenant_id = ?",
+    let lease_rows = sqlx::query_as::<_, (f64, Option<String>, Option<String>, Option<i64>)>(
+        "SELECT monthly_rent, start_date, end_date, rent_due_day FROM leases WHERE tenant_id = ?",
     )
     .bind(&tenant_id)
     .fetch_all(&st.pool)
     .await?;
     let spans = lease_spans_from(lease_rows);
     let paid_by_year = rent_paid_by_year(st, property_id).await?;
-    Ok(compute_outstanding(
-        &spans,
-        &paid_by_year,
-        selected_year,
-    ))
+    Ok(compute_outstanding(&spans, &paid_by_year, selected_year))
 }
 
 /// Portfolio rollup in one round-trip: every property with its year summary and
@@ -235,11 +226,10 @@ pub async fn overview(
         .and_then(|y| y.parse().ok())
         .unwrap_or_else(current_year);
 
-    let props = sqlx::query_as::<_, Property>(&format!(
-        "SELECT {COLUMNS} FROM properties ORDER BY name"
-    ))
-    .fetch_all(&st.pool)
-    .await?;
+    let props =
+        sqlx::query_as::<_, Property>(&format!("SELECT {COLUMNS} FROM properties ORDER BY name"))
+            .fetch_all(&st.pool)
+            .await?;
 
     let sums = sqlx::query_as::<_, (String, f64, f64)>(&format!(
         "SELECT t.property_id, \
@@ -260,15 +250,16 @@ pub async fn overview(
         .collect();
 
     // Leases of the current tenant, grouped by property.
-    let lease_rows = sqlx::query_as::<_, (String, f64, Option<String>, Option<String>)>(
-        "SELECT t.property_id, l.monthly_rent, l.start_date, l.end_date \
+    let lease_rows =
+        sqlx::query_as::<_, (String, f64, Option<String>, Option<String>, Option<i64>)>(
+            "SELECT t.property_id, l.monthly_rent, l.start_date, l.end_date, l.rent_due_day \
          FROM leases l JOIN tenants t ON t.id = l.tenant_id WHERE t.is_current = 1",
-    )
-    .fetch_all(&st.pool)
-    .await?;
+        )
+        .fetch_all(&st.pool)
+        .await?;
     let mut spans_by_prop: HashMap<String, Vec<LeaseSpan>> = HashMap::new();
-    for (pid, rent, sd, ed) in lease_rows {
-        if let Some(span) = lease_span(rent, sd.as_deref(), ed.as_deref()) {
+    for (pid, rent, sd, ed, due) in lease_rows {
+        if let Some(span) = lease_span(rent, sd.as_deref(), ed.as_deref(), due) {
             spans_by_prop.entry(pid).or_default().push(span);
         }
     }
@@ -397,7 +388,11 @@ fn sorted_totals(map: HashMap<String, f64>) -> Vec<TaxCategoryTotal> {
         .into_iter()
         .map(|(category, total)| TaxCategoryTotal { category, total })
         .collect();
-    out.sort_by(|a, b| b.total.partial_cmp(&a.total).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.total
+            .partial_cmp(&a.total)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -453,21 +448,30 @@ struct LeaseSpan {
     start: i32,
     end: Option<i32>,
     rent: f64,
+    rent_due_day: Option<i64>,
 }
 
-fn lease_span(rent: f64, start_date: Option<&str>, end_date: Option<&str>) -> Option<LeaseSpan> {
+fn lease_span(
+    rent: f64,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+    rent_due_day: Option<i64>,
+) -> Option<LeaseSpan> {
     // A lease only accrues once it has a start date.
     let start = start_date.and_then(month_index)?;
     Some(LeaseSpan {
         start,
         end: end_date.and_then(month_index),
         rent,
+        rent_due_day,
     })
 }
 
-fn lease_spans_from(rows: Vec<(f64, Option<String>, Option<String>)>) -> Vec<LeaseSpan> {
+fn lease_spans_from(
+    rows: Vec<(f64, Option<String>, Option<String>, Option<i64>)>,
+) -> Vec<LeaseSpan> {
     rows.into_iter()
-        .filter_map(|(rent, sd, ed)| lease_span(rent, sd.as_deref(), ed.as_deref()))
+        .filter_map(|(rent, sd, ed, due)| lease_span(rent, sd.as_deref(), ed.as_deref(), due))
         .collect()
 }
 
@@ -504,8 +508,18 @@ fn compute_outstanding(
             .unwrap_or(0.0)
     };
 
-    // Only accrue through months that have already occurred.
-    let cap = current_month_index();
+    // Only accrue through months that have already come due. The current month
+    // isn't owed until its rent-due day passes, so it's excluded before then.
+    let current_m = current_month_index();
+    let due_day_now = spans
+        .iter()
+        .filter(|s| s.start <= current_m && s.end.map_or(true, |e| e >= current_m))
+        .max_by_key(|s| s.start)
+        .and_then(|s| s.rent_due_day);
+    let cap = match due_day_now {
+        Some(day) if current_day_of_month() < day => current_m - 1,
+        _ => current_m,
+    };
     let year_expected = |y: i32| -> f64 {
         let lo = std::cmp::max(y * 12, start);
         let hi = std::cmp::min(y * 12 + 11, cap);

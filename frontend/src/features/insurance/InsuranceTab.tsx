@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api, formatCurrency, type InsurancePolicy } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
+import { MoneyInput } from "@/components/ui/MoneyInput";
 import { DeleteButton } from "@/components/ui/DeleteButton";
 
 export function InsuranceTab({
@@ -59,7 +60,7 @@ export function InsuranceTab({
             <input className="input" value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} />
           </Field>
           <Field label="Premium">
-            <input type="number" step="0.01" min="0" className="input w-28" value={premium} onChange={(e) => setPremium(e.target.value)} />
+            <MoneyInput className="input w-28" value={premium} onChange={(e) => setPremium(e.target.value)} />
           </Field>
           <Field label="Start">
             <input type="date" className="input" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -76,16 +77,17 @@ export function InsuranceTab({
       {policies.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-[var(--muted)]">No insurance policies yet.</p>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+        <div className="table-card">
+          <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-[var(--border)] bg-[var(--background)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-                <th className="px-4 py-3 font-medium">Provider</th>
-                <th className="px-4 py-3 font-medium">Start</th>
-                <th className="px-4 py-3 font-medium">Expiry</th>
-                <th className="px-4 py-3 text-right font-medium">Premium</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3" />
+              <tr>
+                <th className="th">Provider</th>
+                <th className="th hidden sm:table-cell">Start</th>
+                <th className="th">Expiry</th>
+                <th className="th text-right">Premium</th>
+                <th className="th">Status</th>
+                <th className="th" />
               </tr>
             </thead>
             <tbody>
@@ -97,22 +99,22 @@ export function InsuranceTab({
                   return (
                     <tr
                       key={p.id}
-                      className={`border-b border-[var(--border)] last:border-0 ${
+                      className={
                         expired ? "bg-red-50/60" : p.status === "expiring" ? "bg-amber-50/60" : ""
-                      }`}
+                      }
                     >
-                      <td className="px-4 py-3">
+                      <td className="td">
                         <span className="font-semibold">{p.provider}</span>
                         {p.policy_number && (
                           <span className="text-[var(--muted)]"> · {p.policy_number}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-[var(--muted)]">{p.start_date ?? "—"}</td>
-                      <td className="px-4 py-3">{p.expiry_date}</td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="td hidden text-[var(--muted)] sm:table-cell">{p.start_date ?? "—"}</td>
+                      <td className="td whitespace-nowrap">{p.expiry_date}</td>
+                      <td className="td text-right tabular-nums">
                         {p.premium > 0 ? formatCurrency(p.premium) : "—"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="td whitespace-nowrap">
                         {expired ? (
                           <span className="font-medium text-red-700">Expired</span>
                         ) : days === 0 ? (
@@ -123,7 +125,7 @@ export function InsuranceTab({
                           <span className="font-medium text-emerald-600">Active · in {days}d</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="td text-right">
                         <DeleteButton confirmMessage="Delete this policy?" onDelete={async () => { await api.deleteInsurance(p.id); await onChange(); }} />
                       </td>
                     </tr>
@@ -131,6 +133,7 @@ export function InsuranceTab({
                 })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

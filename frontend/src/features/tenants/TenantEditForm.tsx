@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api, formatCurrency, tenantName, type Lease, type Tenant } from "@/lib/api";
+import { api, formatCurrency, formatDayOfMonth, tenantName, type Lease, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
+import { MoneyInput } from "@/components/ui/MoneyInput";
 import { Switch } from "@/components/ui/Switch";
 import { DeleteButton } from "@/components/ui/DeleteButton";
 import { EditButton } from "@/components/ui/EditButton";
@@ -21,7 +22,6 @@ export function TenantEditForm({
   const [email, setEmail] = useState(tenant.email);
   const [phone, setPhone] = useState(tenant.phone);
   const [isCurrent, setIsCurrent] = useState(tenant.is_current);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(tenant.notifications_enabled);
   const [notes, setNotes] = useState(tenant.notes);
   const [licenseId, setLicenseId] = useState(tenant.driver_license_id);
   const [licenseFile, setLicenseFile] = useState<File | null>(null);
@@ -44,7 +44,6 @@ export function TenantEditForm({
         email,
         phone,
         is_current: isCurrent,
-        notifications_enabled: notificationsEnabled,
         notes,
         driver_license_id: driverLicenseId,
       });
@@ -62,7 +61,7 @@ export function TenantEditForm({
     <div className="modal-overlay" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="modal-panel flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden"
+        className="modal-panel flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden"
       >
         <header className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
           <div>
@@ -130,16 +129,6 @@ export function TenantEditForm({
                 </label>
               </Field>
             </div>
-            <Field label="Automated messages">
-              <label className="flex h-[38px] cursor-pointer items-center gap-3">
-                <Switch checked={notificationsEnabled} onChange={setNotificationsEnabled} />
-                <span className="text-sm text-[var(--muted)]">
-                  {notificationsEnabled
-                    ? "Receives reminders"
-                    : "Paused — no automated texts"}
-                </span>
-              </label>
-            </Field>
             <Field label="Notes">
               <textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </Field>
@@ -209,7 +198,7 @@ function LeaseManager({
         monthly_rent: parseFloat(rent || "0"),
         start_date: start || null,
         end_date: end || null,
-        payment_date: payment || null,
+        rent_due_day: payment ? parseInt(payment, 10) : null,
         late_fee: parseFloat(lateFee || "0"),
       });
       setLeases((ls) => [lease, ...ls]);
@@ -233,14 +222,7 @@ function LeaseManager({
       <div className="mb-4">
         <div className="grid grid-cols-3 gap-3">
           <Field label="Monthly rent">
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              className="input"
-              value={rent}
-              onChange={(e) => setRent(e.target.value)}
-            />
+            <MoneyInput className="input" value={rent} onChange={(e) => setRent(e.target.value)} />
           </Field>
           <Field label="Start">
             <input type="date" className="input" value={start} onChange={(e) => setStart(e.target.value)} />
@@ -248,18 +230,18 @@ function LeaseManager({
           <Field label="End">
             <input type="date" className="input" value={end} onChange={(e) => setEnd(e.target.value)} />
           </Field>
-          <Field label="Payment date">
-            <input type="date" className="input" value={payment} onChange={(e) => setPayment(e.target.value)} />
-          </Field>
-          <Field label="Late fee">
+          <Field label="Rent due day">
             <input
               type="number"
-              step="0.01"
-              min="0"
+              min="1"
+              max="31"
               className="input"
-              value={lateFee}
-              onChange={(e) => setLateFee(e.target.value)}
+              value={payment}
+              onChange={(e) => setPayment(e.target.value)}
             />
+          </Field>
+          <Field label="Late fee">
+            <MoneyInput className="input" value={lateFee} onChange={(e) => setLateFee(e.target.value)} />
           </Field>
         </div>
         <div className="mt-3 flex justify-end">
@@ -281,7 +263,7 @@ function LeaseManager({
                 <th className="px-3 py-2 font-medium">Monthly rent</th>
                 <th className="px-3 py-2 font-medium">Start</th>
                 <th className="px-3 py-2 font-medium">End</th>
-                <th className="px-3 py-2 font-medium">Payment date</th>
+                <th className="px-3 py-2 font-medium">Rent due day</th>
                 <th className="px-3 py-2 font-medium">Late fee</th>
                 <th className="px-3 py-2"></th>
               </tr>
@@ -324,7 +306,7 @@ function LeaseRow({
   const [rent, setRent] = useState(String(lease.monthly_rent));
   const [start, setStart] = useState(lease.start_date ?? "");
   const [end, setEnd] = useState(lease.end_date ?? "");
-  const [payment, setPayment] = useState(lease.payment_date ?? "");
+  const [payment, setPayment] = useState(lease.rent_due_day?.toString() ?? "");
   const [lateFee, setLateFee] = useState(String(lease.late_fee));
   const [busy, setBusy] = useState(false);
 
@@ -335,7 +317,7 @@ function LeaseRow({
         monthly_rent: parseFloat(rent || "0"),
         start_date: start || null,
         end_date: end || null,
-        payment_date: payment || null,
+        rent_due_day: payment ? parseInt(payment, 10) : null,
         late_fee: parseFloat(lateFee || "0"),
       });
       onUpdated(updated);
@@ -361,7 +343,7 @@ function LeaseRow({
     return (
       <tr className="border-b border-[var(--border)] last:border-0">
         <td className="px-3 py-2">
-          <input type="number" step="0.01" min="0" className="input w-full" value={rent} onChange={(e) => setRent(e.target.value)} />
+          <MoneyInput className="input w-full" value={rent} onChange={(e) => setRent(e.target.value)} />
         </td>
         <td className="px-3 py-2">
           <input type="date" className="input w-full" value={start} onChange={(e) => setStart(e.target.value)} />
@@ -370,10 +352,10 @@ function LeaseRow({
           <input type="date" className="input w-full" value={end} onChange={(e) => setEnd(e.target.value)} />
         </td>
         <td className="px-3 py-2">
-          <input type="date" className="input w-full" value={payment} onChange={(e) => setPayment(e.target.value)} />
+          <input type="number" min="1" max="31" className="input w-full" value={payment} onChange={(e) => setPayment(e.target.value)} />
         </td>
         <td className="px-3 py-2">
-          <input type="number" step="0.01" min="0" className="input w-full" value={lateFee} onChange={(e) => setLateFee(e.target.value)} />
+          <MoneyInput className="input w-full" value={lateFee} onChange={(e) => setLateFee(e.target.value)} />
         </td>
         <td className="px-3 py-2">
           <div className="flex items-center justify-end gap-3">
@@ -392,13 +374,13 @@ function LeaseRow({
   return (
     <tr className="border-b border-[var(--border)] last:border-0 transition hover:bg-[var(--background)]">
       <td className="px-3 py-2 font-medium tabular-nums">
-        {lease.monthly_rent > 0 ? `${formatCurrency(lease.monthly_rent)}/mo` : "—"}
+        {lease.monthly_rent > 0 ? formatCurrency(lease.monthly_rent) : "—"}
       </td>
       <td className="px-3 py-2 text-[var(--muted)]">{lease.start_date ?? "—"}</td>
       <td className="px-3 py-2 text-[var(--muted)]">
         {lease.start_date ? lease.end_date ?? "ongoing" : "—"}
       </td>
-      <td className="px-3 py-2 text-[var(--muted)]">{lease.payment_date ?? "—"}</td>
+      <td className="px-3 py-2 text-[var(--muted)]">{formatDayOfMonth(lease.rent_due_day) ?? "—"}</td>
       <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
         {lease.late_fee > 0 ? formatCurrency(lease.late_fee) : "—"}
       </td>

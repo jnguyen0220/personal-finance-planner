@@ -249,7 +249,7 @@ export default function Home() {
               <Link
                 key={property.id}
                 href={`/properties/${property.id}`}
-                className="group card p-5 transition hover:border-indigo-300"
+                className="group card card-hover p-5"
               >
                 <div className="flex items-start justify-between gap-2">
                   <span className="font-semibold group-hover:text-indigo-600">{property.name}</span>
@@ -266,27 +266,25 @@ export default function Home() {
           })}
         </div>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-card">
+          <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-[var(--border)] bg-[var(--background)]">
+              <tr>
                 <th className="th">Property</th>
-                <th className="th">Type</th>
+                <th className="th hidden sm:table-cell">Type</th>
                 <th className="th text-right">Income</th>
                 <th className="th text-right">Expense</th>
                 <th className="th text-right">Net</th>
-                <th className="th text-right">Outstanding</th>
+                <th className="th hidden text-right sm:table-cell">Outstanding</th>
               </tr>
             </thead>
             <tbody>
               {visibleRows.map(({ property, total_income, total_expense, net, outstanding }) => {
                 const location = formatPropertyAddress(property);
                 return (
-                  <tr
-                    key={property.id}
-                    className="group border-b border-[var(--border)] last:border-0 transition hover:bg-[var(--border)]/30"
-                  >
-                    <td className="px-4 py-3">
+                  <tr key={property.id} className="group">
+                    <td className="td">
                       <Link href={`/properties/${property.id}`} className="block">
                         <span className="font-semibold group-hover:text-indigo-600">
                           {property.name}
@@ -298,7 +296,7 @@ export default function Home() {
                         )}
                       </Link>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="td hidden sm:table-cell">
                       <span
                         className={`badge ${
                           property.kind === "personal"
@@ -309,20 +307,20 @@ export default function Home() {
                         {property.kind === "personal" ? "Personal" : "Rental"}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-emerald-600">
+                    <td className="td text-right font-semibold tabular-nums text-emerald-600">
                       {formatCurrency(total_income)}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-red-600">
+                    <td className="td text-right font-semibold tabular-nums text-red-600">
                       {formatCurrency(total_expense)}
                     </td>
                     <td
-                      className={`px-4 py-3 text-right font-semibold ${
+                      className={`td text-right font-semibold tabular-nums ${
                         net >= 0 ? "text-emerald-600" : "text-red-600"
                       }`}
                     >
                       {formatCurrency(net)}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                    <td className="td hidden text-right font-semibold tabular-nums sm:table-cell">
                       {property.kind === "rental" && outstanding > 0.005 ? (
                         <span className="text-amber-700">{formatCurrency(outstanding)}</span>
                       ) : (
@@ -334,6 +332,7 @@ export default function Home() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </main>

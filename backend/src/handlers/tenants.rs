@@ -9,7 +9,7 @@ use crate::models::{Lease, Tenant, TenantInput, TenantWithLeases};
 use crate::state::AppState;
 
 const COLUMNS: &str =
-    "id, property_id, first_name, last_name, email, phone, is_current, notifications_enabled, notes, driver_license_id, created_at";
+    "id, property_id, first_name, last_name, email, phone, is_current, notes, driver_license_id, created_at";
 
 pub async fn list(
     State(st): State<AppState>,
@@ -23,7 +23,7 @@ pub async fn list(
     .await?;
 
     let leases = sqlx::query_as::<_, Lease>(
-        "SELECT l.id, l.tenant_id, l.monthly_rent, l.start_date, l.end_date, l.payment_date, l.late_fee, l.notes, l.created_at \
+        "SELECT l.id, l.tenant_id, l.monthly_rent, l.start_date, l.end_date, l.rent_due_day, l.late_fee, l.notes, l.created_at \
          FROM leases l JOIN tenants t ON t.id = l.tenant_id \
          WHERE t.property_id = ? ORDER BY l.start_date DESC, l.created_at DESC",
     )
@@ -47,14 +47,15 @@ pub async fn list(
 }
 
 async fn get_one(st: &AppState, id: &str) -> AppResult<TenantWithLeases> {
-    let tenant = sqlx::query_as::<_, Tenant>(&format!("SELECT {COLUMNS} FROM tenants WHERE id = ?"))
-        .bind(id)
-        .fetch_optional(&st.pool)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let tenant =
+        sqlx::query_as::<_, Tenant>(&format!("SELECT {COLUMNS} FROM tenants WHERE id = ?"))
+            .bind(id)
+            .fetch_optional(&st.pool)
+            .await?
+            .ok_or(AppError::NotFound)?;
 
     let leases = sqlx::query_as::<_, Lease>(
-        "SELECT id, tenant_id, monthly_rent, start_date, end_date, payment_date, late_fee, notes, created_at \
+        "SELECT id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notes, created_at \
          FROM leases WHERE tenant_id = ? ORDER BY start_date DESC, created_at DESC",
     )
     .bind(id)
@@ -75,8 +76,8 @@ pub async fn create(
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO tenants (id, property_id, first_name, last_name, email, phone, is_current, notifications_enabled, notes, driver_license_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tenants (id, property_id, first_name, last_name, email, phone, is_current, notes, driver_license_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&property_id)
@@ -85,7 +86,6 @@ pub async fn create(
     .bind(&input.email)
     .bind(&input.phone)
     .bind(input.is_current)
-    .bind(input.notifications_enabled)
     .bind(&input.notes)
     .bind(&input.driver_license_id)
     .bind(&now)
@@ -103,14 +103,13 @@ pub async fn update(
     Json(input): Json<TenantInput>,
 ) -> AppResult<Json<TenantWithLeases>> {
     let affected = sqlx::query(
-        "UPDATE tenants SET first_name = ?, last_name = ?, email = ?, phone = ?, is_current = ?, notifications_enabled = ?, notes = ?, driver_license_id = ? WHERE id = ?",
+        "UPDATE tenants SET first_name = ?, last_name = ?, email = ?, phone = ?, is_current = ?, notes = ?, driver_license_id = ? WHERE id = ?",
     )
     .bind(input.first_name.trim())
     .bind(input.last_name.trim())
     .bind(&input.email)
     .bind(&input.phone)
     .bind(input.is_current)
-    .bind(input.notifications_enabled)
     .bind(&input.notes)
     .bind(&input.driver_license_id)
     .bind(&id)

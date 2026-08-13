@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api, formatCurrency, type CategoryInfo } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
+import { MoneyInput } from "@/components/ui/MoneyInput";
 import { configFor } from "./categories";
 
 export function CategoryForm({
@@ -87,10 +88,7 @@ export function CategoryForm({
         )}
         {cfg.fields.includes("amount") && (
           <Field label="Amount">
-            <input
-              type="number"
-              step="0.01"
-              min="0"
+            <MoneyInput
               className="input w-28"
               value={amount}
               onChange={(e) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, formatCurrency, tenantName, type OutstandingBalance, type Tenant } from "@/lib/api";
+import { api, formatCurrency, formatPhone, latestLease, tenantName, type OutstandingBalance, type Tenant } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
 import { Switch } from "@/components/ui/Switch";
 import { DeleteButton } from "@/components/ui/DeleteButton";
@@ -104,24 +104,25 @@ export function TenantsTab({
       {tenants.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-[var(--muted)]">No tenants yet.</p>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+        <div className="table-card">
+          <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-[var(--border)] bg-[var(--background)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Phone</th>
-                <th className="px-4 py-3 text-right font-medium">Rent</th>
-                <th className="px-4 py-3 font-medium">Lease</th>
-                <th className="px-4 py-3"></th>
+              <tr>
+                <th className="th">Name</th>
+                <th className="th hidden lg:table-cell">Email</th>
+                <th className="th hidden md:table-cell">Phone</th>
+                <th className="th text-right">Monthly rent</th>
+                <th className="th hidden sm:table-cell">Lease</th>
+                <th className="th"></th>
               </tr>
             </thead>
             <tbody>
               {tenants.map((t) => {
-                const lease = t.active_lease;
+                const lease = latestLease(t.leases);
                 return (
-                  <tr key={t.id} className="border-b border-[var(--border)] last:border-0 transition hover:bg-[var(--background)]">
-                    <td className="px-4 py-3">
+                  <tr key={t.id}>
+                    <td className="td">
                       <span className="flex items-center gap-2 whitespace-nowrap font-semibold">
                         {tenantName(t)}
                         {t.is_current && (
@@ -134,19 +135,19 @@ export function TenantsTab({
                         )}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-[var(--muted)]">
+                    <td className="td hidden max-w-[16rem] truncate text-[var(--muted)] lg:table-cell">
                       {t.email || "—"}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-[var(--muted)]">
-                      {t.phone || "—"}
+                    <td className="td hidden whitespace-nowrap text-[var(--muted)] md:table-cell">
+                      {t.phone ? formatPhone(t.phone) : "—"}
                     </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                      {lease && lease.monthly_rent > 0 ? `${formatCurrency(lease.monthly_rent)}/mo` : "—"}
+                    <td className="td text-right whitespace-nowrap tabular-nums">
+                      {lease && lease.monthly_rent > 0 ? formatCurrency(lease.monthly_rent) : "—"}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-[var(--muted)]">
+                    <td className="td hidden whitespace-nowrap text-[var(--muted)] sm:table-cell">
                       {lease?.start_date ? `${lease.start_date} → ${lease.end_date ?? "?"}` : "—"}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="td">
                       <div className="flex items-center justify-end gap-2">
                         <EditButton label="Edit tenant" onEdit={() => setEditing(t)} />
                         <DeleteButton
@@ -164,6 +165,7 @@ export function TenantsTab({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

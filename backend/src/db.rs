@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS properties (
     state         TEXT NOT NULL DEFAULT '',
     zip           TEXT NOT NULL DEFAULT '',
     kind          TEXT NOT NULL DEFAULT 'rental',
+    reminders_enabled INTEGER NOT NULL DEFAULT 1,
     purchase_date TEXT,
     notes         TEXT NOT NULL DEFAULT '',
     hoa_name      TEXT NOT NULL DEFAULT '',
@@ -30,7 +31,6 @@ CREATE TABLE IF NOT EXISTS tenants (
     email        TEXT NOT NULL DEFAULT '',
     phone        TEXT NOT NULL DEFAULT '',
     is_current   INTEGER NOT NULL DEFAULT 0,
-    notifications_enabled INTEGER NOT NULL DEFAULT 1,
     notes        TEXT NOT NULL DEFAULT '',
     driver_license_id TEXT REFERENCES attachments(id) ON DELETE SET NULL,
     created_at   TEXT NOT NULL
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS leases (
     monthly_rent REAL NOT NULL DEFAULT 0,
     start_date   TEXT,
     end_date     TEXT,
-    payment_date TEXT,
+    rent_due_day INTEGER,
     late_fee     REAL NOT NULL DEFAULT 0,
     notify_days  INTEGER NOT NULL DEFAULT 30,
     notes        TEXT NOT NULL DEFAULT '',
@@ -197,6 +197,13 @@ async fn seed_reference_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     }
+
+    // Default sign-off; kept only when the operator hasn't set their own.
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
+        .bind(crate::settings::SIGNATURE)
+        .bind(crate::settings::SIGNATURE_DEFAULT)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -216,13 +223,29 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         "ALTER TABLE tenants ADD COLUMN driver_license_id TEXT REFERENCES attachments(id) ON DELETE SET NULL",
     )
     .await?;
-    add_column_if_missing(
-        pool,
-        "tenants",
-        "notifications_enabled",
-        "ALTER TABLE tenants ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 1",
-    )
-    .await?;
+    // Reminder opt-out moved from the (impermanent) tenant to the property.
+    if !column_exists(pool, "properties", "reminders_enabled").await? {
+        sqlx::query(
+            "ALTER TABLE properties ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 1",
+        )
+        .execute(pool)
+        .await?;
+        // Preserve any opt-out previously set on a property's current tenant.
+        if column_exists(pool, "tenants", "notifications_enabled").await? {
+            sqlx::query(
+                "UPDATE properties SET reminders_enabled = 0 \
+                 WHERE EXISTS (SELECT 1 FROM tenants t \
+                               WHERE t.property_id = properties.id AND t.is_current = 1 AND t.notifications_enabled = 0)",
+            )
+            .execute(pool)
+            .await?;
+        }
+    }
+    if column_exists(pool, "tenants", "notifications_enabled").await? {
+        sqlx::query("ALTER TABLE tenants DROP COLUMN notifications_enabled")
+            .execute(pool)
+            .await?;
+    }
     add_column_if_missing(
         pool,
         "tenants",
@@ -298,8 +321,8 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     add_column_if_missing(
         pool,
         "leases",
-        "payment_date",
-        "ALTER TABLE leases ADD COLUMN payment_date TEXT",
+        "rent_due_day",
+        "ALTER TABLE leases ADD COLUMN rent_due_day INTEGER",
     )
     .await?;
     add_column_if_missing(

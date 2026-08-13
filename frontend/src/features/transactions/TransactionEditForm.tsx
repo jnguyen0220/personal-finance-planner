@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api, type CategoryInfo, type Transaction } from "@/lib/api";
 import { Field } from "@/components/ui/Field";
+import { MoneyInput } from "@/components/ui/MoneyInput";
 import { Modal } from "@/components/ui/Modal";
 import { configFor } from "./categories";
 
@@ -77,7 +78,7 @@ export function TransactionEditForm({
         )}
         {cfg.fields.includes("amount") && (
           <Field label="Amount">
-            <input type="number" step="0.01" min="0" className="input" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            <MoneyInput className="input" value={amount} onChange={(e) => setAmount(e.target.value)} required />
           </Field>
         )}
         {cfg.fields.includes("tenant") && (

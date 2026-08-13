@@ -12,6 +12,7 @@ pub struct Property {
     pub state: String,
     pub zip: String,
     pub kind: String,
+    pub reminders_enabled: bool,
     pub purchase_date: Option<String>,
     pub notes: String,
     pub hoa_name: String,
@@ -34,6 +35,9 @@ pub struct PropertyInput {
     pub zip: String,
     #[serde(default = "default_kind")]
     pub kind: String,
+    /// Whether automated reminders may be sent to this property's tenants.
+    #[serde(default = "default_true")]
+    pub reminders_enabled: bool,
     pub purchase_date: Option<String>,
     #[serde(default)]
     pub notes: String,
@@ -60,7 +64,6 @@ pub struct Tenant {
     pub email: String,
     pub phone: String,
     pub is_current: bool,
-    pub notifications_enabled: bool,
     pub notes: String,
     pub driver_license_id: Option<String>,
     pub created_at: String,
@@ -77,9 +80,6 @@ pub struct TenantInput {
     pub phone: String,
     #[serde(default)]
     pub is_current: bool,
-    /// Whether automated messages may be sent to this tenant.
-    #[serde(default = "default_true")]
-    pub notifications_enabled: bool,
     #[serde(default)]
     pub notes: String,
     #[serde(default)]
@@ -97,7 +97,7 @@ pub struct Lease {
     pub monthly_rent: f64,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    pub payment_date: Option<String>,
+    pub rent_due_day: Option<i64>,
     pub late_fee: f64,
     pub notes: String,
     pub created_at: String,
@@ -109,7 +109,7 @@ pub struct LeaseInput {
     pub monthly_rent: f64,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    pub payment_date: Option<String>,
+    pub rent_due_day: Option<i64>,
     #[serde(default)]
     pub late_fee: f64,
     /// Days before `end_date` to start notifying about the lease ending.
@@ -284,14 +284,47 @@ pub struct MessageInput {
     pub body: String,
 }
 
+/// Message `kind` values for messages composed here (rather than from a named
+/// template). The single source for these origin strings.
+pub mod message_kind {
+    pub const CUSTOM: &str = "custom";
+    pub const BROADCAST: &str = "broadcast";
+    pub const PROVIDERS: &str = "providers";
+}
+
 fn default_message_kind() -> String {
-    "custom".to_string()
+    message_kind::CUSTOM.to_string()
+}
+
+/// Outcome of a broadcast: how many recipients were attempted and delivered.
+#[derive(Serialize)]
+pub struct BroadcastResult {
+    pub total: usize,
+    pub sent: usize,
+    pub failed: usize,
+}
+
+/// A current tenant a broadcast would reach.
+#[derive(Serialize, FromRow)]
+pub struct BroadcastRecipient {
+    pub id: String,
+    pub name: String,
+    pub phone: String,
+    pub property_name: String,
 }
 
 /// Global application settings the operator can toggle at runtime.
 #[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub messaging_enabled: bool,
+    pub signature: String,
+}
+
+/// Partial settings update: only the provided fields are written.
+#[derive(Deserialize)]
+pub struct SettingsUpdate {
+    pub messaging_enabled: Option<bool>,
+    pub signature: Option<String>,
 }
 
 /// A utility provider (electricity, water, gas, trash, …) for a property, with

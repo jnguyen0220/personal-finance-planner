@@ -5,11 +5,17 @@ import { DeleteButton } from "@/components/ui/DeleteButton";
 import { EditButton } from "@/components/ui/EditButton";
 import { configFor, FIELD_LABELS, type TxField } from "./categories";
 
+// Secondary columns collapse first so tables fit narrow screens without scrolling.
+const FIELD_HIDE: Partial<Record<TxField, string>> = {
+  description: "hidden md:table-cell",
+  receipt: "hidden sm:table-cell",
+};
+
 export function txCell(field: TxField, t: Transaction) {
   switch (field) {
     case "date":
       return (
-        <td key="date" className="px-4 py-3 whitespace-nowrap">
+        <td key="date" className="td whitespace-nowrap">
           {t.date}
         </td>
       );
@@ -17,7 +23,7 @@ export function txCell(field: TxField, t: Transaction) {
       return (
         <td
           key="amount"
-          className={`px-4 py-3 text-right font-semibold ${t.kind === "income" ? "text-emerald-600" : "text-red-600"}`}
+          className={`td text-right font-semibold tabular-nums ${t.kind === "income" ? "text-emerald-600" : "text-red-600"}`}
         >
           {t.kind === "income" ? "+" : "-"}
           {formatCurrency(t.amount)}
@@ -28,19 +34,19 @@ export function txCell(field: TxField, t: Transaction) {
       );
     case "tenant":
       return (
-        <td key="tenant" className="px-4 py-3 text-[var(--muted)]">
+        <td key="tenant" className="td text-[var(--muted)]">
           {t.tenant_name || "—"}
         </td>
       );
     case "description":
       return (
-        <td key="description" className="px-4 py-3 text-[var(--muted)]">
+        <td key="description" className="td hidden text-[var(--muted)] md:table-cell">
           {t.description || "—"}
         </td>
       );
     case "receipt":
       return (
-        <td key="receipt" className="px-4 py-3">
+        <td key="receipt" className="td hidden sm:table-cell">
           {t.receipt_id ? (
             <a
               href={api.attachmentUrl(t.receipt_id)}
@@ -68,7 +74,7 @@ function RowActions({
   onChange: () => Promise<void>;
 }) {
   return (
-    <td className="px-4 py-3 text-right">
+    <td className="td text-right">
       <div className="flex items-center justify-end gap-2">
         <EditButton onEdit={() => onEdit(transaction)} />
         <DeleteButton
@@ -95,27 +101,29 @@ export function CategoryTable({
 }) {
   const cfg = configFor(categories, category);
   return (
-    <div className="card overflow-x-auto">
-      <table className="w-full min-w-[640px] text-sm">
+    <div className="table-card">
+      <div className="table-scroll">
+      <table className="data-table">
         <thead>
-          <tr className="border-b border-[var(--border)] bg-[var(--background)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
+          <tr>
             {cfg.fields.map((f) => (
-              <th key={f} className={`px-4 py-3 font-medium ${f === "amount" ? "text-right" : ""}`}>
+              <th key={f} className={`th ${f === "amount" ? "text-right" : ""} ${FIELD_HIDE[f] ?? ""}`}>
                 {FIELD_LABELS[f]}
               </th>
             ))}
-            <th className="px-4 py-3"></th>
+            <th className="th" />
           </tr>
         </thead>
         <tbody>
           {rows.map((t) => (
-            <tr key={t.id} className="border-b border-[var(--border)] last:border-0 transition hover:bg-[var(--background)]">
+            <tr key={t.id}>
               {cfg.fields.map((f) => txCell(f, t))}
               <RowActions transaction={t} onEdit={onEdit} onChange={onChange} />
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -130,26 +138,27 @@ export function AllTransactionsTable({
   onChange: () => Promise<void>;
 }) {
   return (
-    <div className="card overflow-x-auto">
-      <table className="w-full min-w-[640px] text-sm">
+    <div className="table-card">
+      <div className="table-scroll">
+      <table className="data-table">
         <thead>
-          <tr className="border-b border-[var(--border)] bg-[var(--background)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-            <th className="px-4 py-3 font-medium">Date</th>
-            <th className="px-4 py-3 font-medium">Category</th>
-            <th className="px-4 py-3 font-medium">Details</th>
-            <th className="px-4 py-3 text-right font-medium">Amount</th>
-            <th className="px-4 py-3 font-medium">Receipt</th>
-            <th className="px-4 py-3"></th>
+          <tr>
+            <th className="th">Date</th>
+            <th className="th">Category</th>
+            <th className="th">Details</th>
+            <th className="th text-right">Amount</th>
+            <th className="th hidden sm:table-cell">Receipt</th>
+            <th className="th" />
           </tr>
         </thead>
         <tbody>
           {rows.map((t) => (
-            <tr key={t.id} className="border-b border-[var(--border)] last:border-0 transition hover:bg-[var(--background)]">
-              <td className="px-4 py-3 whitespace-nowrap">{t.date}</td>
-              <td className="px-4 py-3">
+            <tr key={t.id}>
+              <td className="td whitespace-nowrap">{t.date}</td>
+              <td className="td">
                 <span className="badge bg-slate-100 capitalize text-slate-700">{t.category}</span>
               </td>
-              <td className="px-4 py-3 text-[var(--muted)]">{t.tenant_name || t.description || "—"}</td>
+              <td className="td max-w-[14rem] truncate text-[var(--muted)]">{t.tenant_name || t.description || "—"}</td>
               {txCell("amount", t)}
               {txCell("receipt", t)}
               <RowActions transaction={t} onEdit={onEdit} onChange={onChange} />
@@ -157,6 +166,7 @@ export function AllTransactionsTable({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
