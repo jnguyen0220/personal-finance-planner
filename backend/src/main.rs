@@ -3,6 +3,7 @@ mod dates;
 mod db;
 mod error;
 mod etag;
+mod gmail;
 mod handlers;
 mod messaging;
 mod models;
@@ -59,6 +60,42 @@ async fn main() {
             }
         }
     });
+
+    // Poll Gmail for inbound email on a fixed interval when credentials are set.
+    if gmail::configured() {
+        let poll_secs = std::env::var("GMAIL_POLL_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(300)
+            .max(1);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(poll_secs));
+            loop {
+                ticker.tick().await;
+                match gmail::poll().await {
+                    Ok(emails) => {
+                        for e in &emails {
+                            tracing::info!(
+                                id = %e.id,
+                                thread = %e.thread_id,
+                                from = %e.from,
+                                subject = %e.subject,
+                                date = %e.date,
+                                snippet = %e.snippet,
+                                bytes = e.body.len(),
+                                "gmail: fetched email"
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!("gmail poll failed: {e}"),
+                }
+            }
+        });
+    } else {
+        tracing::info!(
+            "Gmail polling disabled — set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN to enable"
+        );
+    }
 
     let app = Router::new()
         .route("/api/health", get(health))
