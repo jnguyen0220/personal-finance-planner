@@ -162,7 +162,7 @@ export default function PropertyDetail() {
       </div>
 
       {property.kind !== "personal" && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="Income" value={formatCurrency(summary.total_income)} tone="green" />
           <Stat label="Expense" value={formatCurrency(summary.total_expense)} tone="red" />
           <Stat
@@ -170,6 +170,17 @@ export default function PropertyDetail() {
             value={formatCurrency(summary.total_income - summary.total_expense)}
             tone={summary.total_income - summary.total_expense >= 0 ? "green" : "red"}
           />
+          {(() => {
+            const net = summary.total_income - summary.total_expense;
+            const gainPct = summary.total_expense > 0 ? (net / summary.total_expense) * 100 : null;
+            return (
+              <Stat
+                label="Percent gain"
+                value={gainPct === null ? "—" : `${gainPct >= 0 ? "+" : ""}${gainPct.toFixed(1)}%`}
+                tone={gainPct !== null && gainPct < 0 ? "red" : "green"}
+              />
+            );
+          })()}
         </div>
       )}
 
