@@ -16,9 +16,11 @@ import { DeleteButton } from "@/components/ui/DeleteButton";
 export function ProvidersTab({
   propertyId,
   tenants,
+  propertyKind,
 }: {
   propertyId: string;
   tenants: Tenant[];
+  propertyKind: string;
 }) {
   const queryClient = useQueryClient();
   const currentTenants = useMemo(() => tenants.filter((t) => t.is_current), [tenants]);
@@ -35,7 +37,6 @@ export function ProvidersTab({
 
   const [tenantId, setTenantId] = useState(currentTenants[0]?.id ?? "");
   const [sendMsg, setSendMsg] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
 
   const { data: providers = [] } = useQuery({
     queryKey: ["providers", propertyId],
@@ -78,12 +79,6 @@ export function ProvidersTab({
     onError: (e) => setSendMsg((e as Error).message),
   });
 
-  const previewMsg = useMutation({
-    mutationFn: () => api.previewProviders(propertyId),
-    onSuccess: (r) => setPreview(r.body),
-    onError: (e) => setPreview((e as Error).message),
-  });
-
   return (
     <div>
       <form onSubmit={addProvider} className="mb-6 card p-5">
@@ -118,57 +113,38 @@ export function ProvidersTab({
         </div>
       </form>
 
-      <div className="mb-6 card p-5">
-        <div className="flex flex-wrap items-end gap-3">
-          {currentTenants.length > 0 && (
-            <Field label="Send utility info to">
-              <select className="input" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-                {currentTenants.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {`${t.first_name} ${t.last_name}`.trim()}
-                    {t.phone ? ` · ${formatPhone(t.phone)}` : " · no phone"}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-          <button
-            type="button"
-            disabled={previewMsg.isPending}
-            onClick={() => {
-              setPreview(null);
-              previewMsg.mutate();
-            }}
-            className="btn-secondary"
-          >
-            {previewMsg.isPending ? "Loading…" : "Preview message"}
-          </button>
-          {currentTenants.length > 0 && (
-            <button
-              type="button"
-              disabled={send.isPending || !tenantId}
-              onClick={() => {
-                setSendMsg(null);
-                send.mutate();
-              }}
-              className="btn-primary"
-            >
-              {send.isPending ? "Sending…" : "Send to tenant"}
-            </button>
-          )}
-          {sendMsg && <span className="pb-2 text-xs text-[var(--muted)]">{sendMsg}</span>}
-        </div>
-        {preview !== null && (
-          <div className="mt-4">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Message preview
-            </p>
-            <pre className="whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm">
-              {preview}
-            </pre>
+      {propertyKind !== "personal" && (
+        <div className="mb-6 card p-5">
+          <div className="flex flex-wrap items-end gap-3">
+            {currentTenants.length > 0 && (
+              <Field label="Send utility info to">
+                <select className="input" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+                  {currentTenants.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {`${t.first_name} ${t.last_name}`.trim()}
+                      {t.phone ? ` · ${formatPhone(t.phone)}` : " · no phone"}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {currentTenants.length > 0 && (
+              <button
+                type="button"
+                disabled={send.isPending || !tenantId}
+                onClick={() => {
+                  setSendMsg(null);
+                  send.mutate();
+                }}
+                className="btn-primary"
+              >
+                {send.isPending ? "Sending…" : "Send to tenant"}
+              </button>
+            )}
+            {sendMsg && <span className="pb-2 text-xs text-[var(--muted)]">{sendMsg}</span>}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {providers.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-[var(--muted)]">No providers yet.</p>

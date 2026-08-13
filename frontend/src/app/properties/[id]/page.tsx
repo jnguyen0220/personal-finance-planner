@@ -115,7 +115,10 @@ export default function PropertyDetail() {
     );
   }
 
-  const tabs: Tab[] = ["transactions", "tenants", "insurance", "providers", "messages"];
+  const tabs: Tab[] =
+    property.kind === "personal"
+      ? ["transactions", "insurance", "providers"]
+      : ["transactions", "tenants", "insurance", "providers", "messages"];
   const address = formatPropertyAddress(property);
 
   return (
@@ -252,7 +255,7 @@ export default function PropertyDetail() {
         <MessagesTab propertyId={id} tenants={tenants} />
       )}
       {tab === "providers" && (
-        <ProvidersTab propertyId={id} tenants={tenants} />
+        <ProvidersTab propertyId={id} tenants={tenants} propertyKind={property.kind} />
       )}
       </div>
 
