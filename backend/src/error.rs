@@ -10,6 +10,17 @@ pub enum AppError {
     Io(std::io::Error),
 }
 
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppError::NotFound => write!(f, "resource not found"),
+            AppError::BadRequest(m) => write!(f, "{m}"),
+            AppError::Db(e) => write!(f, "database error: {e}"),
+            AppError::Io(e) => write!(f, "io error: {e}"),
+        }
+    }
+}
+
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
         match e {

@@ -19,7 +19,7 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates tesseract-ocr poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 app
 

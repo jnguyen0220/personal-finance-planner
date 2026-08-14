@@ -26,6 +26,15 @@ pub const NOTIFY_DAYS_DEFAULT: i64 = 30;
 /// Phone numbers that receive SMS reminders for lease and insurance expiry.
 pub const CONTACT_PHONES: &str = "contact_phones";
 
+/// Timestamp (RFC 3339) of the most recent successful Gmail poll.
+pub const GMAIL_LAST_POLL: &str = "gmail_last_poll";
+
+/// Whether the daily scheduler runs the Gmail invoice poll.
+pub const DAILY_EMAIL_ENABLED: &str = "daily_email_enabled";
+
+/// Whether the daily scheduler runs the expiry reminder reconcile and messaging.
+pub const DAILY_REMINDERS_ENABLED: &str = "daily_reminders_enabled";
+
 pub async fn get_bool(pool: &SqlitePool, key: &str, default: bool) -> Result<bool, sqlx::Error> {
     let value = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
         .bind(key)

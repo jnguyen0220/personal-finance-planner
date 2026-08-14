@@ -58,7 +58,23 @@ pub struct Email {
     pub subject: String,
     pub date: String,
     pub snippet: String,
-    pub body: String,
+    pub attachments: Vec<Attachment>,
+}
+
+/// A file attached to an email, with its bytes already downloaded.
+pub struct Attachment {
+    pub filename: String,
+    pub mime_type: String,
+    pub data: Vec<u8>,
+}
+
+/// A reference to an attachment part before its bytes are fetched. Small parts
+/// carry their data inline; larger ones expose an `attachment_id` to download.
+struct AttachmentRef {
+    filename: String,
+    mime_type: String,
+    data: Option<String>,
+    attachment_id: Option<String>,
 }
 
 /// Fetches messages matching the configured query. Returns an empty list when
@@ -170,7 +186,88 @@ async fn get_message(client: &reqwest::Client, token: &str, id: &str) -> Result<
         .json::<GmailMessage>()
         .await
         .map_err(|e| e.to_string())?;
-    Ok(to_email(msg))
+
+    let mut refs = Vec::new();
+    if let Some(p) = &msg.payload {
+        collect_attachments(p, &mut refs);
+    }
+    let mut attachments = Vec::new();
+    for r in refs {
+        let data = match (r.data, &r.attachment_id) {
+            (Some(inline), _) => decode_base64url(&inline),
+            (None, Some(aid)) => fetch_attachment(client, token, id, aid).await?,
+            (None, None) => continue,
+        };
+        attachments.push(Attachment {
+            filename: r.filename,
+            mime_type: r.mime_type,
+            data,
+        });
+    }
+    Ok(to_email(msg, attachments))
+}
+
+/// Whether a MIME type is an image or PDF we can store and OCR.
+fn is_supported_attachment(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "application/pdf"
+    )
+}
+
+/// Depth-first walk collecting parts that carry a filename and a supported type.
+fn collect_attachments(payload: &Payload, out: &mut Vec<AttachmentRef>) {
+    let mime = payload.mime_type.as_deref().unwrap_or_default();
+    let filename = payload.filename.as_deref().unwrap_or_default();
+    if !filename.is_empty() && is_supported_attachment(mime) {
+        if let Some(body) = &payload.body {
+            out.push(AttachmentRef {
+                filename: filename.to_string(),
+                mime_type: mime.to_string(),
+                data: body.data.clone(),
+                attachment_id: body.attachment_id.clone(),
+            });
+        }
+    }
+    for part in &payload.parts {
+        collect_attachments(part, out);
+    }
+}
+
+/// Downloads a single attachment's bytes via the dedicated endpoint.
+async fn fetch_attachment(
+    client: &reqwest::Client,
+    token: &str,
+    message_id: &str,
+    attachment_id: &str,
+) -> Result<Vec<u8>, String> {
+    #[derive(Deserialize)]
+    struct AttachmentBody {
+        data: Option<String>,
+    }
+
+    let resp = client
+        .get(format!(
+            "{GMAIL_API}/messages/{message_id}/attachments/{attachment_id}"
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("get attachment failed ({status}): {body}"));
+    }
+    let body = resp
+        .json::<AttachmentBody>()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(body
+        .data
+        .as_deref()
+        .map(decode_base64url)
+        .unwrap_or_default())
 }
 
 #[derive(Deserialize)]
@@ -188,6 +285,8 @@ struct Payload {
     #[serde(rename = "mimeType")]
     mime_type: Option<String>,
     #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
     headers: Vec<Header>,
     body: Option<Body>,
     #[serde(default)]
@@ -203,15 +302,16 @@ struct Header {
 #[derive(Deserialize)]
 struct Body {
     data: Option<String>,
+    #[serde(rename = "attachmentId", default)]
+    attachment_id: Option<String>,
 }
 
-fn to_email(msg: GmailMessage) -> Email {
-    let (from, subject, date, body) = match &msg.payload {
+fn to_email(msg: GmailMessage, attachments: Vec<Attachment>) -> Email {
+    let (from, subject, date) = match &msg.payload {
         Some(p) => (
             header(&p.headers, "From").to_string(),
             header(&p.headers, "Subject").to_string(),
             header(&p.headers, "Date").to_string(),
-            extract_body(p),
         ),
         None => Default::default(),
     };
@@ -222,7 +322,7 @@ fn to_email(msg: GmailMessage) -> Email {
         subject,
         date,
         snippet: msg.snippet,
-        body,
+        attachments,
     }
 }
 
@@ -234,36 +334,13 @@ fn header<'a>(headers: &'a [Header], name: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-/// Depth-first search for the message text, preferring `text/plain`.
-fn extract_body(payload: &Payload) -> String {
-    if payload.mime_type.as_deref() == Some("text/plain") {
-        if let Some(text) = payload.body.as_ref().and_then(decode_body) {
-            return text;
-        }
-    }
-    for part in &payload.parts {
-        let text = extract_body(part);
-        if !text.is_empty() {
-            return text;
-        }
-    }
-    // Fall back to a single-part message body (e.g. plain text with no parts).
-    payload
-        .body
-        .as_ref()
-        .and_then(decode_body)
-        .unwrap_or_default()
-}
-
-fn decode_body(body: &Body) -> Option<String> {
-    let data = body.data.as_ref()?;
-    // Gmail encodes body data as base64url; strip padding/whitespace to be lenient.
+/// Decodes Gmail's base64url payload data, tolerating padding and whitespace.
+fn decode_base64url(data: &str) -> Vec<u8> {
     let cleaned: String = data
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '=')
         .collect();
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cleaned)
-        .ok()?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default()
 }

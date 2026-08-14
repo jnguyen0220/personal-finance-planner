@@ -176,6 +176,35 @@ export interface Attachment {
   uploaded_at: string;
 }
 
+/// An inbound invoice attachment awaiting review, with the amount OCR suggested.
+export interface InboxItem {
+  id: string;
+  gmail_id: string;
+  thread_id: string;
+  from_addr: string;
+  subject: string;
+  snippet: string;
+  received_at: string;
+  attachment_id: string | null;
+  attachment_name: string | null;
+  attachment_type: string | null;
+  ocr_amount: number | null;
+  ocr_status: string | null;
+  status: string;
+  created_at: string;
+}
+
+/// The details a reviewer supplies to file an inbox invoice as a transaction.
+export interface InboxAssignInput {
+  property_id: string;
+  category_id: string;
+  amount: number;
+  date: string;
+  description?: string;
+  tenant_name?: string;
+  borne_by?: TxBorneBy;
+}
+
 export interface PropertySummary {
   total_income: number;
   total_expense: number;
@@ -341,6 +370,9 @@ export interface Settings {
   lease_notify_days: number;
   insurance_notify_days: number;
   contact_phones: string[];
+  daily_email_enabled: boolean;
+  daily_reminders_enabled: boolean;
+  next_daily_run: string;
 }
 
 export interface TemplatePlaceholder {
@@ -591,6 +623,22 @@ export const api = {
     return res.json();
   },
   attachmentUrl: (id: string) => `/api/attachments/${id}`,
+
+  listInbox: () => request<InboxItem[]>("/inbox"),
+  inboxStatus: () => request<{ last_poll: string | null }>("/inbox/status"),
+  pollInbox: () =>
+    request<{ ingested: number; last_poll: string | null }>("/inbox/poll", {
+      method: "POST",
+    }),
+  assignInbox: (id: string, input: InboxAssignInput) =>
+    request<Transaction>(`/inbox/${id}/assign`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  rerunOcr: (id: string) =>
+    request<InboxItem>(`/inbox/${id}/ocr`, { method: "POST" }),
+  dismissInbox: (id: string) =>
+    request<void>(`/inbox/${id}/dismiss`, { method: "POST" }),
 };
 
 export function formatCurrency(value: number): string {
@@ -598,6 +646,46 @@ export function formatCurrency(value: number): string {
     style: "currency",
     currency: "USD",
   }).format(value);
+}
+
+/// Format an ISO timestamp as an absolute date and time, e.g. "Aug 14, 2026, 3:45 PM".
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/// Format an ISO timestamp as a short relative time, e.g. "5 minutes ago".
+export function formatTimeAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) {
+    return "";
+  }
+  const seconds = Math.round((then - Date.now()) / 1000);
+  const abs = Math.abs(seconds);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["year", 31536000],
+    ["month", 2592000],
+    ["week", 604800],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+  ];
+  for (const [unit, secs] of units) {
+    if (abs >= secs) {
+      return rtf.format(Math.round(seconds / secs), unit);
+    }
+  }
+  return rtf.format(seconds, "second");
 }
 
 /// Format a US phone number as "(123) 456-7890". A country-code prefix is kept

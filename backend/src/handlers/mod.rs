@@ -1,5 +1,6 @@
 pub mod attachments;
 pub mod categories;
+pub mod inbox;
 pub mod insurance;
 pub mod leases;
 pub mod messages;

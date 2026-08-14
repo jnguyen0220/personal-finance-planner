@@ -27,6 +27,41 @@ fn allowed_extension(content_type: &str, original: &str) -> Option<&'static str>
     }
 }
 
+/// Persists raw bytes as an attachment (file on disk + database row), returning
+/// the new attachment id. Shared by uploads and inbound email ingestion.
+pub(crate) async fn store_bytes(
+    st: &AppState,
+    original_name: &str,
+    content_type: &str,
+    data: &[u8],
+) -> AppResult<String> {
+    let ext = allowed_extension(content_type, original_name).ok_or_else(|| {
+        AppError::BadRequest("only JPG, PNG, GIF, WEBP or PDF files are allowed".into())
+    })?;
+    if data.len() > MAX_SIZE {
+        return Err(AppError::BadRequest("file exceeds 20 MB limit".into()));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let stored_name = format!("{id}.{ext}");
+    tokio::fs::write(st.uploads.join(&stored_name), data).await?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO attachments (id, stored_name, original_name, content_type, size, uploaded_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&stored_name)
+    .bind(original_name)
+    .bind(content_type)
+    .bind(data.len() as i64)
+    .bind(&now)
+    .execute(&st.pool)
+    .await?;
+    Ok(id)
+}
+
 pub async fn upload(
     State(st): State<AppState>,
     mut multipart: Multipart,
@@ -45,37 +80,12 @@ pub async fn upload(
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let ext = allowed_extension(&content_type, &original).ok_or_else(|| {
-            AppError::BadRequest("only JPG, PNG, GIF, WEBP or PDF files are allowed".into())
-        })?;
-
         let data = field
             .bytes()
             .await
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        if data.len() > MAX_SIZE {
-            return Err(AppError::BadRequest("file exceeds 20 MB limit".into()));
-        }
 
-        let id = Uuid::new_v4().to_string();
-        let stored_name = format!("{id}.{ext}");
-        let path = st.uploads.join(&stored_name);
-        tokio::fs::write(&path, &data).await?;
-
-        let now = chrono::Utc::now().to_rfc3339();
-        let size = data.len() as i64;
-        sqlx::query(
-            "INSERT INTO attachments (id, stored_name, original_name, content_type, size, uploaded_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(&stored_name)
-        .bind(&original)
-        .bind(&content_type)
-        .bind(size)
-        .bind(&now)
-        .execute(&st.pool)
-        .await?;
+        let id = store_bytes(&st, &original, &content_type, &data).await?;
 
         let attachment = sqlx::query_as::<_, Attachment>(
             "SELECT id, stored_name, original_name, content_type, size, uploaded_at \

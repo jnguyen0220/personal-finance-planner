@@ -17,7 +17,7 @@
 			"onAutoForward": "notify"
 		}
 	},
-	"postCreateCommand": "rustup component add rustfmt clippy && cargo --version && node --version",
+	"postCreateCommand": "sudo apt-get update && sudo apt-get install -y tesseract-ocr poppler-utils && rustup component add rustfmt clippy && cargo --version && node --version",
 	"customizations": {
 		"vscode": {
 			"extensions": [

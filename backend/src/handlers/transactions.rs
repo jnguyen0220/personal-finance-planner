@@ -72,15 +72,25 @@ pub async fn create(
     Path(property_id): Path<String>,
     Json(input): Json<TransactionInput>,
 ) -> AppResult<Json<Transaction>> {
+    Ok(Json(create_from(&st.pool, &property_id, &input).await?))
+}
+
+/// Inserts a transaction under a property, deriving kind/borne_by from the
+/// category. Shared by the HTTP handler and inbox-invoice assignment.
+pub(crate) async fn create_from(
+    pool: &SqlitePool,
+    property_id: &str,
+    input: &TransactionInput,
+) -> AppResult<Transaction> {
     if input.date.trim().is_empty() {
         return Err(AppError::BadRequest("date is required".into()));
     }
     let property_kind = sqlx::query_scalar::<_, String>("SELECT kind FROM properties WHERE id = ?")
-        .bind(&property_id)
-        .fetch_optional(&st.pool)
+        .bind(property_id)
+        .fetch_optional(pool)
         .await?
         .ok_or(AppError::NotFound)?;
-    let (kind, borne_by) = resolve(&st.pool, &input, &property_kind).await?;
+    let (kind, borne_by) = resolve(pool, input, &property_kind).await?;
 
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -89,7 +99,7 @@ pub async fn create(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
-    .bind(&property_id)
+    .bind(property_id)
     .bind(&kind)
     .bind(&input.category_id)
     .bind(input.amount)
@@ -99,9 +109,9 @@ pub async fn create(
     .bind(&borne_by)
     .bind(&input.receipt_id)
     .bind(&now)
-    .execute(&st.pool)
+    .execute(pool)
     .await?;
-    Ok(Json(fetch_transaction(&st.pool, &id).await?))
+    fetch_transaction(pool, &id).await
 }
 
 pub async fn update(

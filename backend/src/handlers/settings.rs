@@ -26,6 +26,10 @@ pub async fn get(State(st): State<AppState>) -> AppResult<Json<Settings>> {
     )
     .await?;
     let contact_phones = settings::get_list(&st.pool, settings::CONTACT_PHONES).await?;
+    let daily_email_enabled =
+        settings::get_bool(&st.pool, settings::DAILY_EMAIL_ENABLED, true).await?;
+    let daily_reminders_enabled =
+        settings::get_bool(&st.pool, settings::DAILY_REMINDERS_ENABLED, true).await?;
     Ok(Json(Settings {
         messaging_enabled,
         property_messaging_enabled,
@@ -33,7 +37,18 @@ pub async fn get(State(st): State<AppState>) -> AppResult<Json<Settings>> {
         lease_notify_days,
         insurance_notify_days,
         contact_phones,
+        daily_email_enabled,
+        daily_reminders_enabled,
+        next_daily_run: next_daily_run(st.started_at).to_rfc3339(),
     }))
+}
+
+/// The next once-a-day run after now, anchored on process start.
+fn next_daily_run(started_at: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    let day = chrono::Duration::hours(24);
+    let elapsed = (chrono::Utc::now() - started_at).num_seconds().max(0);
+    let periods = elapsed / day.num_seconds() + 1;
+    started_at + day * periods as i32
 }
 
 pub async fn update(
@@ -63,6 +78,12 @@ pub async fn update(
             .filter(|p| !p.is_empty())
             .collect();
         settings::set_list(&st.pool, settings::CONTACT_PHONES, &cleaned).await?;
+    }
+    if let Some(enabled) = input.daily_email_enabled {
+        settings::set_bool(&st.pool, settings::DAILY_EMAIL_ENABLED, enabled).await?;
+    }
+    if let Some(enabled) = input.daily_reminders_enabled {
+        settings::set_bool(&st.pool, settings::DAILY_REMINDERS_ENABLED, enabled).await?;
     }
     get(State(st)).await
 }

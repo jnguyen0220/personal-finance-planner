@@ -8,6 +8,7 @@ mod handlers;
 mod messaging;
 mod models;
 mod notify;
+mod ocr;
 mod options;
 mod settings;
 mod sms;
@@ -44,54 +45,47 @@ async fn main() {
         .await
         .expect("failed to initialise database");
 
-    let state = AppState { pool, uploads };
+    let state = AppState {
+        pool,
+        uploads,
+        started_at: chrono::Utc::now(),
+    };
 
-    // Regenerate expiry notifications on startup and once a day thereafter.
+    // Regenerate expiry notifications and poll Gmail for inbound invoices on
+    // startup and once a day thereafter. Each job can be disabled at runtime.
     let scheduler_state = state.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
         loop {
             ticker.tick().await;
-            if let Err(e) = notify::reconcile(&scheduler_state.pool).await {
-                tracing::error!("daily notification reconcile failed: {e}");
+            let reminders_on = settings::get_bool(
+                &scheduler_state.pool,
+                settings::DAILY_REMINDERS_ENABLED,
+                true,
+            )
+            .await
+            .unwrap_or(true);
+            if reminders_on {
+                if let Err(e) = notify::reconcile(&scheduler_state.pool).await {
+                    tracing::error!("daily notification reconcile failed: {e}");
+                }
+                if let Err(e) = messaging::run(&scheduler_state).await {
+                    tracing::error!("daily automated messaging failed: {e}");
+                }
             }
-            if let Err(e) = messaging::run(&scheduler_state).await {
-                tracing::error!("daily automated messaging failed: {e}");
+            let email_on =
+                settings::get_bool(&scheduler_state.pool, settings::DAILY_EMAIL_ENABLED, true)
+                    .await
+                    .unwrap_or(true);
+            if email_on && gmail::configured() {
+                if let Err(e) = handlers::inbox::poll_and_ingest(&scheduler_state).await {
+                    tracing::error!("daily gmail poll failed: {e}");
+                }
             }
         }
     });
 
-    // Poll Gmail for inbound email on a fixed interval when credentials are set.
-    if gmail::configured() {
-        let poll_secs = std::env::var("GMAIL_POLL_SECS")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(300)
-            .max(1);
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(poll_secs));
-            loop {
-                ticker.tick().await;
-                match gmail::poll().await {
-                    Ok(emails) => {
-                        for e in &emails {
-                            tracing::info!(
-                                id = %e.id,
-                                thread = %e.thread_id,
-                                from = %e.from,
-                                subject = %e.subject,
-                                date = %e.date,
-                                snippet = %e.snippet,
-                                bytes = e.body.len(),
-                                "gmail: fetched email"
-                            );
-                        }
-                    }
-                    Err(e) => tracing::error!("gmail poll failed: {e}"),
-                }
-            }
-        });
-    } else {
+    if !gmail::configured() {
         tracing::info!(
             "Gmail polling disabled — set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN to enable"
         );
@@ -212,6 +206,12 @@ async fn main() {
             post(handlers::attachments::upload).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
         )
         .route("/api/attachments/:id", get(handlers::attachments::download))
+        .route("/api/inbox", get(handlers::inbox::list))
+        .route("/api/inbox/status", get(handlers::inbox::status))
+        .route("/api/inbox/poll", post(handlers::inbox::poll))
+        .route("/api/inbox/:id/ocr", post(handlers::inbox::rerun_ocr))
+        .route("/api/inbox/:id/assign", post(handlers::inbox::assign))
+        .route("/api/inbox/:id/dismiss", post(handlers::inbox::dismiss))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, formatPhoneInput, type Settings } from "@/lib/api";
+import { api, formatPhoneInput, formatTimeAgo, type Settings } from "@/lib/api";
 import { Switch } from "@/components/ui/Switch";
 import { MessageTemplates } from "@/features/messages/MessageTemplates";
 import { Broadcast } from "@/features/messages/Broadcast";
@@ -109,6 +109,72 @@ function GeneralSettings() {
           <Switch
             checked={propertyEnabled}
             onChange={(v) => save.mutate({ property_messaging_enabled: v })}
+          />
+        </label>
+      </div>
+    </section>
+  );
+}
+
+function ScheduleSettings() {
+  const queryClient = useQueryClient();
+  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: api.getSettings });
+  const emailEnabled = settings?.daily_email_enabled ?? true;
+  const remindersEnabled = settings?.daily_reminders_enabled ?? true;
+
+  const save = useMutation({
+    mutationFn: (input: Partial<Settings>) => api.updateSettings(input),
+    onSuccess: (s) => {
+      queryClient.setQueryData(["settings"], s);
+    },
+  });
+
+  const nextRun = settings?.next_daily_run;
+  const nextRunLabel = nextRun
+    ? `${new Date(nextRun).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })} (${formatTimeAgo(nextRun)})`
+    : "—";
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div>
+        <h2 className="font-semibold tracking-tight">Daily schedule</h2>
+        <p className="mt-0.5 text-sm text-[var(--muted)]">
+          Background jobs run once a day. Next run at{" "}
+          <span className="font-medium text-[var(--foreground)]">{nextRunLabel}</span>.
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 border-t border-[var(--border)] pt-4">
+        <div>
+          <h3 className="text-sm font-semibold tracking-tight">Email invoice polling</h3>
+          <p className="mt-0.5 text-sm text-[var(--muted)]">
+            When off, the daily job won&apos;t check Gmail for new invoice attachments.
+          </p>
+        </div>
+        <label className="flex cursor-pointer items-center gap-2">
+          <span className="text-sm font-medium">{emailEnabled ? "On" : "Off"}</span>
+          <Switch
+            checked={emailEnabled}
+            onChange={(v) => save.mutate({ daily_email_enabled: v })}
+          />
+        </label>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 border-t border-[var(--border)] pt-4">
+        <div>
+          <h3 className="text-sm font-semibold tracking-tight">Expiry reminders</h3>
+          <p className="mt-0.5 text-sm text-[var(--muted)]">
+            When off, the daily job won&apos;t refresh expiry notifications or send reminders.
+          </p>
+        </div>
+        <label className="flex cursor-pointer items-center gap-2">
+          <span className="text-sm font-medium">{remindersEnabled ? "On" : "Off"}</span>
+          <Switch
+            checked={remindersEnabled}
+            onChange={(v) => save.mutate({ daily_reminders_enabled: v })}
           />
         </label>
       </div>
@@ -299,6 +365,7 @@ export default function AdminPage() {
       {tab === "general" && (
         <div className="space-y-6">
           <GeneralSettings />
+          <ScheduleSettings />
           <ReminderSettings />
           <ContactPhones />
           <Broadcast />

@@ -143,9 +143,7 @@ fn active_lease(leases: &[Lease]) -> Option<Lease> {
     leases
         .iter()
         .filter(|l| {
-            l.start_date
-                .as_deref()
-                .is_none_or(|s| s <= today.as_str())
+            l.start_date.as_deref().is_none_or(|s| s <= today.as_str())
                 && l.end_date.as_deref().is_none_or(|e| e >= today.as_str())
         })
         .max_by(|a, b| {
@@ -309,6 +307,10 @@ pub struct Settings {
     pub lease_notify_days: i64,
     pub insurance_notify_days: i64,
     pub contact_phones: Vec<String>,
+    pub daily_email_enabled: bool,
+    pub daily_reminders_enabled: bool,
+    /// Next scheduled daily-job run (RFC 3339); read-only, ignored on update.
+    pub next_daily_run: String,
 }
 
 /// Partial settings update: only the provided fields are written.
@@ -320,6 +322,8 @@ pub struct SettingsUpdate {
     pub lease_notify_days: Option<i64>,
     pub insurance_notify_days: Option<i64>,
     pub contact_phones: Option<Vec<String>>,
+    pub daily_email_enabled: Option<bool>,
+    pub daily_reminders_enabled: Option<bool>,
 }
 
 /// A utility provider (electricity, water, gas, trash, …) for a property, with
@@ -371,6 +375,41 @@ pub struct Attachment {
     pub content_type: String,
     pub size: i64,
     pub uploaded_at: String,
+}
+
+/// An inbound invoice attachment awaiting review. Joins its attachment so the
+/// UI can preview the file and its OCR-suggested amount before assignment.
+#[derive(Serialize, FromRow)]
+pub struct InboxItem {
+    pub id: String,
+    pub gmail_id: String,
+    pub thread_id: String,
+    pub from_addr: String,
+    pub subject: String,
+    pub snippet: String,
+    pub received_at: String,
+    pub attachment_id: Option<String>,
+    pub attachment_name: Option<String>,
+    pub attachment_type: Option<String>,
+    pub ocr_amount: Option<f64>,
+    pub ocr_status: Option<String>,
+    pub status: String,
+    pub created_at: String,
+}
+
+/// The details a reviewer supplies to file an inbox invoice as a transaction.
+#[derive(Deserialize)]
+pub struct InboxAssignInput {
+    pub property_id: String,
+    pub category_id: String,
+    pub amount: f64,
+    pub date: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tenant_name: String,
+    #[serde(default = "default_borne_by")]
+    pub borne_by: String,
 }
 
 #[derive(Serialize, FromRow)]

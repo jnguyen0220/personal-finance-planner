@@ -159,6 +159,26 @@ CREATE TABLE IF NOT EXISTS contact_reminders (
     dedup_key  TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+
+-- Inbound invoice attachments awaiting human review and assignment to a
+-- property. One row per attachment; `gmail_id` groups an email's attachments
+-- and is used to skip messages already ingested.
+CREATE TABLE IF NOT EXISTS inbox_items (
+    id             TEXT PRIMARY KEY,
+    gmail_id       TEXT NOT NULL,
+    thread_id      TEXT NOT NULL DEFAULT '',
+    from_addr      TEXT NOT NULL DEFAULT '',
+    subject        TEXT NOT NULL DEFAULT '',
+    snippet        TEXT NOT NULL DEFAULT '',
+    received_at    TEXT NOT NULL DEFAULT '',
+    attachment_id  TEXT REFERENCES attachments(id) ON DELETE SET NULL,
+    ocr_text       TEXT NOT NULL DEFAULT '',
+    ocr_amount     REAL,
+    ocr_status     TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
+    created_at     TEXT NOT NULL
+);
 "#;
 
 // Created after migrations so indexes never reference a column an older
@@ -173,6 +193,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_active ON notifications(dismissed_a
 CREATE INDEX IF NOT EXISTS idx_messages_property ON messages(property_id);
 CREATE INDEX IF NOT EXISTS idx_messages_tenant ON messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_providers_property ON providers(property_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status);
+CREATE INDEX IF NOT EXISTS idx_inbox_items_gmail ON inbox_items(gmail_id);
 "#;
 
 pub async fn init_pool(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
@@ -431,6 +453,15 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_dedup ON messages(dedup_key)")
         .execute(pool)
         .await?;
+
+    // Traffic-light OCR outcome for review items (success/no_detection/failed).
+    add_column_if_missing(
+        pool,
+        "inbox_items",
+        "ocr_status",
+        "ALTER TABLE inbox_items ADD COLUMN ocr_status TEXT",
+    )
+    .await?;
 
     // Backfill the tenant name from the legacy tenant_id link on older databases.
     if column_exists(pool, "transactions", "tenant_id").await? {
