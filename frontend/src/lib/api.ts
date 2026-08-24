@@ -176,7 +176,7 @@ export interface Attachment {
   uploaded_at: string;
 }
 
-/// An inbound invoice attachment awaiting review, with the amount OCR suggested.
+/// An inbound invoice attachment awaiting review.
 export interface InboxItem {
   id: string;
   gmail_id: string;
@@ -188,8 +188,6 @@ export interface InboxItem {
   attachment_id: string | null;
   attachment_name: string | null;
   attachment_type: string | null;
-  ocr_amount: number | null;
-  ocr_status: string | null;
   status: string;
   created_at: string;
 }
@@ -415,14 +413,32 @@ async function toError(res: Response, fallback = "request failed"): Promise<Erro
   return new Error(body.error ?? fallback);
 }
 
+/// The single outbound-HTTP choke point for the browser app. Every request to
+/// the backend funnels through here, so the `/api` base path, `no-store`
+/// caching, request logging and network-error normalization live in exactly
+/// one place. Nothing else in the app calls `fetch` directly.
+async function httpFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = `/api${path}`;
+  const method = init?.method ?? "GET";
+  try {
+    const res = await fetch(url, { cache: "no-store", ...init });
+    if (process.env.NODE_ENV !== "production") {
+      console.debug(`[api] ${method} ${url} -> ${res.status}`);
+    }
+    return res;
+  } catch (err) {
+    console.error(`[api] ${method} ${url} failed`, err);
+    throw err instanceof Error ? err : new Error("network request failed");
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  const res = await httpFetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    cache: "no-store",
   });
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
@@ -459,9 +475,8 @@ function writeCache<T>(path: string, env: CachedEnvelope<T>): void {
 // downloaded (and persisted) when the server's hash has changed.
 async function cachedRequest<T>(path: string): Promise<T> {
   const cached = readCache<T>(path);
-  const res = await fetch(`/api${path}`, {
+  const res = await httpFetch(path, {
     headers: cached?.etag ? { "If-None-Match": cached.etag } : undefined,
-    cache: "no-store",
   });
   if (res.status === 304 && cached) return cached.data;
   if (!res.ok) throw await toError(res);
@@ -618,7 +633,7 @@ export const api = {
   uploadAttachment: async (file: File): Promise<Attachment> => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch("/api/attachments", { method: "POST", body: form });
+    const res = await httpFetch("/attachments", { method: "POST", body: form });
     if (!res.ok) throw await toError(res, "upload failed");
     return res.json();
   },
@@ -635,8 +650,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  rerunOcr: (id: string) =>
-    request<InboxItem>(`/inbox/${id}/ocr`, { method: "POST" }),
   dismissInbox: (id: string) =>
     request<void>(`/inbox/${id}/dismiss`, { method: "POST" }),
 };

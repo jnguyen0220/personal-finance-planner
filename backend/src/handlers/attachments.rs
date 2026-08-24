@@ -47,17 +47,19 @@ pub(crate) async fn store_bytes(
     tokio::fs::write(st.uploads.join(&stored_name), data).await?;
 
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO attachments (id, stored_name, original_name, content_type, size, uploaded_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+    crate::db::execute(
+        &st.pool,
+        sqlx::query(
+            "INSERT INTO attachments (id, stored_name, original_name, content_type, size, uploaded_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&stored_name)
+        .bind(original_name)
+        .bind(content_type)
+        .bind(data.len() as i64)
+        .bind(&now),
     )
-    .bind(&id)
-    .bind(&stored_name)
-    .bind(original_name)
-    .bind(content_type)
-    .bind(data.len() as i64)
-    .bind(&now)
-    .execute(&st.pool)
     .await?;
     Ok(id)
 }
@@ -87,12 +89,14 @@ pub async fn upload(
 
         let id = store_bytes(&st, &original, &content_type, &data).await?;
 
-        let attachment = sqlx::query_as::<_, Attachment>(
-            "SELECT id, stored_name, original_name, content_type, size, uploaded_at \
-             FROM attachments WHERE id = ?",
+        let attachment = crate::db::fetch_one(
+            &st.pool,
+            sqlx::query_as::<_, Attachment>(
+                "SELECT id, stored_name, original_name, content_type, size, uploaded_at \
+                 FROM attachments WHERE id = ?",
+            )
+            .bind(&id),
         )
-        .bind(&id)
-        .fetch_one(&st.pool)
         .await?;
         return Ok(Json(attachment));
     }
@@ -100,12 +104,14 @@ pub async fn upload(
 }
 
 pub async fn download(State(st): State<AppState>, Path(id): Path<String>) -> AppResult<Response> {
-    let attachment = sqlx::query_as::<_, Attachment>(
-        "SELECT id, stored_name, original_name, content_type, size, uploaded_at \
-         FROM attachments WHERE id = ?",
+    let attachment = crate::db::fetch_optional(
+        &st.pool,
+        sqlx::query_as::<_, Attachment>(
+            "SELECT id, stored_name, original_name, content_type, size, uploaded_at \
+             FROM attachments WHERE id = ?",
+        )
+        .bind(&id),
     )
-    .bind(&id)
-    .fetch_optional(&st.pool)
     .await?
     .ok_or(AppError::NotFound)?;
 

@@ -36,10 +36,11 @@ pub const DAILY_EMAIL_ENABLED: &str = "daily_email_enabled";
 pub const DAILY_REMINDERS_ENABLED: &str = "daily_reminders_enabled";
 
 pub async fn get_bool(pool: &SqlitePool, key: &str, default: bool) -> Result<bool, sqlx::Error> {
-    let value = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
+    let value = crate::db::scalar_optional(
+        pool,
+        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?").bind(key),
+    )
+    .await?;
     Ok(match value.as_deref() {
         Some("true") | Some("1") => true,
         Some(_) => false,
@@ -48,40 +49,46 @@ pub async fn get_bool(pool: &SqlitePool, key: &str, default: bool) -> Result<boo
 }
 
 pub async fn set_bool(pool: &SqlitePool, key: &str, value: bool) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    crate::db::execute(
+        pool,
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES (?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(if value { "true" } else { "false" }),
     )
-    .bind(key)
-    .bind(if value { "true" } else { "false" })
-    .execute(pool)
     .await?;
     Ok(())
 }
 
 pub async fn get_string(pool: &SqlitePool, key: &str) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(pool)
-        .await
+    crate::db::scalar_optional(
+        pool,
+        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?").bind(key),
+    )
+    .await
 }
 pub async fn set_string(pool: &SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    crate::db::execute(
+        pool,
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES (?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value),
     )
-    .bind(key)
-    .bind(value)
-    .execute(pool)
     .await?;
     Ok(())
 }
 
 pub async fn delete(pool: &SqlitePool, key: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM settings WHERE key = ?")
-        .bind(key)
-        .execute(pool)
-        .await?;
+    crate::db::execute(
+        pool,
+        sqlx::query("DELETE FROM settings WHERE key = ?").bind(key),
+    )
+    .await?;
     Ok(())
 }
 

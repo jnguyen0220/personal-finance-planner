@@ -15,29 +15,32 @@ pub async fn create(
     Path(tenant_id): Path<String>,
     Json(input): Json<LeaseInput>,
 ) -> AppResult<Json<Lease>> {
-    let tenant = sqlx::query_scalar::<_, String>("SELECT id FROM tenants WHERE id = ?")
-        .bind(&tenant_id)
-        .fetch_optional(&st.pool)
-        .await?;
+    let tenant = crate::db::scalar_optional(
+        &st.pool,
+        sqlx::query_scalar::<_, String>("SELECT id FROM tenants WHERE id = ?").bind(&tenant_id),
+    )
+    .await?;
     if tenant.is_none() {
         return Err(AppError::NotFound);
     }
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let row = sqlx::query_as::<_, Lease>(&format!(
-        "INSERT INTO leases (id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notes, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
-    .bind(&id)
-    .bind(&tenant_id)
-    .bind(input.monthly_rent)
-    .bind(&input.start_date)
-    .bind(&input.end_date)
-    .bind(input.rent_due_day)
-    .bind(input.late_fee)
-    .bind(&input.notes)
-    .bind(&now)
-    .fetch_one(&st.pool)
+    let row = crate::db::fetch_one(
+        &st.pool,
+        sqlx::query_as::<_, Lease>(&format!(
+            "INSERT INTO leases (id, tenant_id, monthly_rent, start_date, end_date, rent_due_day, late_fee, notes, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+        ))
+        .bind(&id)
+        .bind(&tenant_id)
+        .bind(input.monthly_rent)
+        .bind(&input.start_date)
+        .bind(&input.end_date)
+        .bind(input.rent_due_day)
+        .bind(input.late_fee)
+        .bind(&input.notes)
+        .bind(&now),
+    )
     .await?;
     Ok(Json(row))
 }
@@ -47,18 +50,20 @@ pub async fn update(
     Path(id): Path<String>,
     Json(input): Json<LeaseInput>,
 ) -> AppResult<Json<Lease>> {
-    let row = sqlx::query_as::<_, Lease>(&format!(
-        "UPDATE leases SET monthly_rent = ?, start_date = ?, end_date = ?, rent_due_day = ?, late_fee = ?, notes = ? \
-         WHERE id = ? RETURNING {COLUMNS}"
-    ))
-    .bind(input.monthly_rent)
-    .bind(&input.start_date)
-    .bind(&input.end_date)
-    .bind(input.rent_due_day)
-    .bind(input.late_fee)
-    .bind(&input.notes)
-    .bind(&id)
-    .fetch_optional(&st.pool)
+    let row = crate::db::fetch_optional(
+        &st.pool,
+        sqlx::query_as::<_, Lease>(&format!(
+            "UPDATE leases SET monthly_rent = ?, start_date = ?, end_date = ?, rent_due_day = ?, late_fee = ?, notes = ? \
+             WHERE id = ? RETURNING {COLUMNS}"
+        ))
+        .bind(input.monthly_rent)
+        .bind(&input.start_date)
+        .bind(&input.end_date)
+        .bind(input.rent_due_day)
+        .bind(input.late_fee)
+        .bind(&input.notes)
+        .bind(&id),
+    )
     .await?
     .ok_or(AppError::NotFound)?;
     Ok(Json(row))

@@ -47,20 +47,22 @@ async fn send_tenant_reminders(st: &AppState) -> Result<(), sqlx::Error> {
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
-        let reserved = sqlx::query(
-            "INSERT OR IGNORE INTO messages \
-             (id, tenant_id, property_id, kind, to_phone, body, status, error, dedup_key, created_at, sent_at) \
-             VALUES (?, ?, ?, ?, ?, ?, 'queued', NULL, ?, ?, NULL)",
+        let reserved = crate::db::execute(
+            &st.pool,
+            sqlx::query(
+                "INSERT OR IGNORE INTO messages \
+                 (id, tenant_id, property_id, kind, to_phone, body, status, error, dedup_key, created_at, sent_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, 'queued', NULL, ?, ?, NULL)",
+            )
+            .bind(&id)
+            .bind(&p.tenant_id)
+            .bind(&p.property_id)
+            .bind(&p.kind)
+            .bind(&p.to_phone)
+            .bind(&p.body)
+            .bind(&p.dedup_key)
+            .bind(&now),
         )
-        .bind(&id)
-        .bind(&p.tenant_id)
-        .bind(&p.property_id)
-        .bind(&p.kind)
-        .bind(&p.to_phone)
-        .bind(&p.body)
-        .bind(&p.dedup_key)
-        .bind(&now)
-        .execute(&st.pool)
         .await?
         .rows_affected();
         if reserved == 0 {
@@ -71,13 +73,15 @@ async fn send_tenant_reminders(st: &AppState) -> Result<(), sqlx::Error> {
             Ok(()) => ("sent", None, Some(now)),
             Err(e) => ("failed", Some(e), None),
         };
-        sqlx::query("UPDATE messages SET status = ?, error = ?, sent_at = ? WHERE id = ?")
-            .bind(status)
-            .bind(&error)
-            .bind(&sent_at)
-            .bind(&id)
-            .execute(&st.pool)
-            .await?;
+        crate::db::execute(
+            &st.pool,
+            sqlx::query("UPDATE messages SET status = ?, error = ?, sent_at = ? WHERE id = ?")
+                .bind(status)
+                .bind(&error)
+                .bind(&sent_at)
+                .bind(&id),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -91,12 +95,14 @@ async fn contact_reminders(st: &AppState) -> Result<(), sqlx::Error> {
         return Ok(());
     }
 
-    let alerts = sqlx::query_as::<_, (Option<String>, String, String, String)>(
-        "SELECT dedup_key, kind, title, body FROM notifications \
-         WHERE dismissed_at IS NULL AND dedup_key IS NOT NULL \
-           AND kind IN ('lease_ending', 'lease_expired', 'insurance_expiring', 'insurance_expired')",
+    let alerts = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (Option<String>, String, String, String)>(
+            "SELECT dedup_key, kind, title, body FROM notifications \
+             WHERE dismissed_at IS NULL AND dedup_key IS NOT NULL \
+               AND kind IN ('lease_ending', 'lease_expired', 'insurance_expiring', 'insurance_expired')",
+        ),
     )
-    .fetch_all(&st.pool)
     .await?;
 
     let lease_template = crate::templates::body(&st.pool, "landlord_lease").await?;
@@ -106,12 +112,14 @@ async fn contact_reminders(st: &AppState) -> Result<(), sqlx::Error> {
         let Some(dedup_key) = dedup_key else { continue };
         let key = format!("contact:{dedup_key}");
         let now = chrono::Utc::now().to_rfc3339();
-        let reserved = sqlx::query(
-            "INSERT OR IGNORE INTO contact_reminders (dedup_key, created_at) VALUES (?, ?)",
+        let reserved = crate::db::execute(
+            &st.pool,
+            sqlx::query(
+                "INSERT OR IGNORE INTO contact_reminders (dedup_key, created_at) VALUES (?, ?)",
+            )
+            .bind(&key)
+            .bind(&now),
         )
-        .bind(&key)
-        .bind(&now)
-        .execute(&st.pool)
         .await?
         .rows_affected();
         if reserved == 0 {
@@ -151,18 +159,29 @@ struct TenantRow {
     city: String,
     state: String,
     zip: String,
+    rent_due_day: Option<i64>,
+    late_fee: Option<f64>,
 }
 
-/// Reminds each rental's current tenant of any outstanding balance, at most once
-/// per calendar month (the `dedup_key` carries the year-month).
+/// Reminds each rental's current tenant of any outstanding balance, once per
+/// calendar month (the `dedup_key` carries the year-month) and only after the
+/// lease's rent-due day has passed.
 async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, TenantRow>(
-        "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, t.property_id, p.address, p.city, p.state, p.zip \
-         FROM tenants t JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND p.reminders_enabled = 1 AND p.kind = 'rental' AND t.phone <> '' \
-         ORDER BY t.created_at",
+    let rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, TenantRow>(
+            "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, t.property_id, p.address, p.city, p.state, p.zip, \
+                    (SELECT l.rent_due_day FROM leases l \
+                     WHERE l.tenant_id = t.id AND l.start_date IS NOT NULL AND l.start_date <> '' \
+                     ORDER BY l.start_date DESC LIMIT 1) AS rent_due_day, \
+                    (SELECT l.late_fee FROM leases l \
+                     WHERE l.tenant_id = t.id AND l.start_date IS NOT NULL AND l.start_date <> '' \
+                     ORDER BY l.start_date DESC LIMIT 1) AS late_fee \
+             FROM tenants t JOIN properties p ON p.id = t.property_id \
+             WHERE t.is_current = 1 AND p.reminders_enabled = 1 AND p.kind = 'rental' AND t.phone <> '' \
+             ORDER BY t.created_at",
+        ),
     )
-    .fetch_all(&st.pool)
     .await?;
 
     // The most recently added current tenant is the one balances are attributed to.
@@ -177,16 +196,28 @@ async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error
         .parse()
         .unwrap_or(1970);
     let month = chrono::Utc::now().format("%Y-%m").to_string();
+    let month_label = chrono::Utc::now().format("%B %Y").to_string();
+    let today_day = dates::current_day_of_month();
     let template = crate::templates::body(&st.pool, "outstanding_balance").await?;
     let signature = crate::templates::signature_value(&st.pool).await?;
 
     let mut out = Vec::new();
     for t in latest.into_values() {
+        // Hold the reminder until this month's rent is actually past due.
+        if t.rent_due_day.is_some_and(|day| today_day <= day) {
+            continue;
+        }
         let balance = outstanding_for(st, &t.property_id, year)
             .await
             .map(|b| b.outstanding)
             .unwrap_or(0.0);
         if balance > 0.005 {
+            // Blank unless the active lease sets a late fee.
+            let late_fee = t
+                .late_fee
+                .filter(|f| *f > 0.005)
+                .map(|f| format!(" A late fee of ${:.2} applies.", f))
+                .unwrap_or_default();
             out.push(Pending {
                 kind: "outstanding_balance".into(),
                 body: crate::templates::render(
@@ -198,7 +229,8 @@ async fn outstanding_messages(st: &AppState) -> Result<Vec<Pending>, sqlx::Error
                         ("state", t.state.clone()),
                         ("zip", t.zip.clone()),
                         ("balance", format!("${:.2}", balance)),
-                        ("year", year.to_string()),
+                        ("month", month_label.clone()),
+                        ("late_fee", late_fee),
                         ("signature", signature.clone()),
                     ],
                 ),
@@ -235,15 +267,17 @@ async fn lease_expiring_messages(pool: &SqlitePool) -> Result<Vec<Pending>, sqlx
         crate::settings::NOTIFY_DAYS_DEFAULT,
     )
     .await?;
-    let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.address, p.city, p.state, p.zip, l.end_date \
-         FROM leases l \
-         JOIN tenants t ON t.id = l.tenant_id \
-         JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND p.reminders_enabled = 1 AND t.phone <> '' AND l.end_date IS NOT NULL AND l.end_date <> '' \
-         ORDER BY l.end_date",
+    let rows = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, LeaseRow>(
+            "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.phone, t.property_id, p.address, p.city, p.state, p.zip, l.end_date \
+             FROM leases l \
+             JOIN tenants t ON t.id = l.tenant_id \
+             JOIN properties p ON p.id = t.property_id \
+             WHERE t.is_current = 1 AND p.reminders_enabled = 1 AND t.phone <> '' AND l.end_date IS NOT NULL AND l.end_date <> '' \
+             ORDER BY l.end_date",
+        ),
     )
-    .fetch_all(pool)
     .await?;
 
     // Rows ascend by end date, so the last seen per tenant is their latest lease.

@@ -20,11 +20,13 @@ pub fn is_known(list: &str) -> bool {
 
 /// The values of `list`, in stored order.
 pub async fn values(pool: &SqlitePool, list: &str) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT value FROM option_lists WHERE list = ? ORDER BY position, value",
+    crate::db::scalar_all(
+        pool,
+        sqlx::query_scalar::<_, String>(
+            "SELECT value FROM option_lists WHERE list = ? ORDER BY position, value",
+        )
+        .bind(list),
     )
-    .bind(list)
-    .fetch_all(pool)
     .await
 }
 
@@ -37,17 +39,20 @@ pub async fn replace(
 ) -> Result<Vec<String>, sqlx::Error> {
     let cleaned = dedupe(values);
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM option_lists WHERE list = ?")
-        .bind(list)
-        .execute(&mut *tx)
-        .await?;
+    crate::db::execute(
+        &mut *tx,
+        sqlx::query("DELETE FROM option_lists WHERE list = ?").bind(list),
+    )
+    .await?;
     for (position, value) in cleaned.iter().enumerate() {
-        sqlx::query("INSERT INTO option_lists (list, value, position) VALUES (?, ?, ?)")
-            .bind(list)
-            .bind(value)
-            .bind(position as i64)
-            .execute(&mut *tx)
-            .await?;
+        crate::db::execute(
+            &mut *tx,
+            sqlx::query("INSERT INTO option_lists (list, value, position) VALUES (?, ?, ?)")
+                .bind(list)
+                .bind(value)
+                .bind(position as i64),
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(cleaned)

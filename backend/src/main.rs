@@ -5,10 +5,10 @@ mod error;
 mod etag;
 mod gmail;
 mod handlers;
+mod http;
 mod messaging;
 mod models;
 mod notify;
-mod ocr;
 mod options;
 mod settings;
 mod sms;
@@ -209,7 +209,6 @@ async fn main() {
         .route("/api/inbox", get(handlers::inbox::list))
         .route("/api/inbox/status", get(handlers::inbox::status))
         .route("/api/inbox/poll", post(handlers::inbox::poll))
-        .route("/api/inbox/:id/ocr", post(handlers::inbox::rerun_ocr))
         .route("/api/inbox/:id/assign", post(handlers::inbox::assign))
         .route("/api/inbox/:id/dismiss", post(handlers::inbox::dismiss))
         .with_state(state)

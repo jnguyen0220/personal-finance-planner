@@ -33,11 +33,12 @@ pub(crate) async fn delete_by_id(
     table: &str,
     id: &str,
 ) -> AppResult<axum::http::StatusCode> {
-    let affected = sqlx::query(&format!("DELETE FROM {table} WHERE id = ?"))
-        .bind(id)
-        .execute(&st.pool)
-        .await?
-        .rows_affected();
+    let affected = crate::db::execute(
+        &st.pool,
+        sqlx::query(&format!("DELETE FROM {table} WHERE id = ?")).bind(id),
+    )
+    .await?
+    .rows_affected();
     ensure_found(affected)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -46,16 +47,18 @@ pub(crate) async fn delete_by_id(
 /// a receipt or document doesn't leave an orphaned upload behind. Best-effort on
 /// the file: a missing one won't fail the caller.
 pub(crate) async fn delete_attachment(st: &AppState, id: &str) -> AppResult<()> {
-    let stored_name =
+    let stored_name = crate::db::scalar_optional(
+        &st.pool,
         sqlx::query_scalar::<_, String>("SELECT stored_name FROM attachments WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&st.pool)
-            .await?;
+            .bind(id),
+    )
+    .await?;
     if let Some(stored_name) = stored_name {
-        sqlx::query("DELETE FROM attachments WHERE id = ?")
-            .bind(id)
-            .execute(&st.pool)
-            .await?;
+        crate::db::execute(
+            &st.pool,
+            sqlx::query("DELETE FROM attachments WHERE id = ?").bind(id),
+        )
+        .await?;
         let _ = tokio::fs::remove_file(st.uploads.join(&stored_name)).await;
     }
     Ok(())

@@ -14,11 +14,13 @@ pub async fn list_for_property(
     State(st): State<AppState>,
     Path(property_id): Path<String>,
 ) -> AppResult<Json<Vec<Message>>> {
-    let rows = sqlx::query_as::<_, Message>(&format!(
-        "SELECT {COLUMNS} FROM messages WHERE property_id = ? ORDER BY created_at DESC"
-    ))
-    .bind(&property_id)
-    .fetch_all(&st.pool)
+    let rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, Message>(&format!(
+            "SELECT {COLUMNS} FROM messages WHERE property_id = ? ORDER BY created_at DESC"
+        ))
+        .bind(&property_id),
+    )
     .await?;
     Ok(Json(rows))
 }
@@ -32,11 +34,13 @@ pub async fn create(
         return Err(AppError::BadRequest("message body is required".into()));
     }
 
-    let tenant = sqlx::query_as::<_, (String, String)>(
-        "SELECT property_id, phone FROM tenants WHERE id = ?",
+    let tenant = crate::db::fetch_optional(
+        &st.pool,
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT property_id, phone FROM tenants WHERE id = ?",
+        )
+        .bind(&tenant_id),
     )
-    .bind(&tenant_id)
-    .fetch_optional(&st.pool)
     .await?
     .ok_or(AppError::NotFound)?;
     let (property_id, phone) = tenant;
@@ -55,13 +59,15 @@ pub async fn create(
 /// Lists the current tenants (across all properties) a broadcast would reach:
 /// those marked current with a phone number on file.
 pub async fn recipients(State(st): State<AppState>) -> AppResult<Json<Vec<BroadcastRecipient>>> {
-    let rows = sqlx::query_as::<_, BroadcastRecipient>(
-        "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, p.name AS property_name \
-         FROM tenants t JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND t.phone <> '' \
-         ORDER BY name",
+    let rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, BroadcastRecipient>(
+            "SELECT t.id, trim(t.first_name || ' ' || t.last_name) AS name, t.phone, p.name AS property_name \
+             FROM tenants t JOIN properties p ON p.id = t.property_id \
+             WHERE t.is_current = 1 AND t.phone <> '' \
+             ORDER BY name",
+        ),
     )
-    .fetch_all(&st.pool)
     .await?;
     Ok(Json(rows))
 }
@@ -77,10 +83,12 @@ pub async fn broadcast(
         return Err(AppError::BadRequest("message body is required".into()));
     }
 
-    let recipients = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT id, property_id, phone FROM tenants WHERE is_current = 1 AND phone <> ''",
+    let recipients = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT id, property_id, phone FROM tenants WHERE is_current = 1 AND phone <> ''",
+        ),
     )
-    .fetch_all(&st.pool)
     .await?;
 
     if recipients.is_empty() {
@@ -123,11 +131,13 @@ pub async fn send_providers(
     State(st): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> AppResult<Json<Message>> {
-    let tenant = sqlx::query_as::<_, (String, String)>(
-        "SELECT property_id, phone FROM tenants WHERE id = ?",
+    let tenant = crate::db::fetch_optional(
+        &st.pool,
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT property_id, phone FROM tenants WHERE id = ?",
+        )
+        .bind(&tenant_id),
     )
-    .bind(&tenant_id)
-    .fetch_optional(&st.pool)
     .await?
     .ok_or(AppError::NotFound)?;
     let (property_id, phone) = tenant;
@@ -156,20 +166,24 @@ pub async fn preview_providers(
 /// Builds the utility-provider + HOA message for a property, erroring when the
 /// property has nothing to share. Shared by preview and send so they never drift.
 async fn compose_providers_message(st: &AppState, property_id: &str) -> AppResult<String> {
-    let property = sqlx::query_as::<_, (String, String, String, String, String, String, String, String)>(
-        "SELECT address, city, state, zip, hoa_name, hoa_phone, hoa_email, hoa_webpage FROM properties WHERE id = ?",
+    let property = crate::db::fetch_optional(
+        &st.pool,
+        sqlx::query_as::<_, (String, String, String, String, String, String, String, String)>(
+            "SELECT address, city, state, zip, hoa_name, hoa_phone, hoa_email, hoa_webpage FROM properties WHERE id = ?",
+        )
+        .bind(property_id),
     )
-    .bind(property_id)
-    .fetch_optional(&st.pool)
     .await?
     .unwrap_or_default();
     let (address, city, state, zip, hoa_name, hoa_phone, hoa_email, hoa_webpage) = property;
 
-    let providers = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT kind, name, phone, homepage FROM providers WHERE property_id = ? ORDER BY kind, name",
+    let providers = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT kind, name, phone, homepage FROM providers WHERE property_id = ? ORDER BY kind, name",
+        )
+        .bind(property_id),
     )
-    .bind(property_id)
-    .fetch_all(&st.pool)
     .await?;
 
     // Any HOA contact detail worth including.
@@ -241,21 +255,23 @@ async fn send_and_store(
     };
 
     let id = Uuid::new_v4().to_string();
-    let row = sqlx::query_as::<_, Message>(&format!(
-        "INSERT INTO messages (id, tenant_id, property_id, kind, to_phone, body, status, error, created_at, sent_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-    ))
-    .bind(&id)
-    .bind(tenant_id)
-    .bind(property_id)
-    .bind(kind)
-    .bind(phone)
-    .bind(body)
-    .bind(status)
-    .bind(&error)
-    .bind(&now)
-    .bind(&sent_at)
-    .fetch_one(&st.pool)
+    let row = crate::db::fetch_one(
+        &st.pool,
+        sqlx::query_as::<_, Message>(&format!(
+            "INSERT INTO messages (id, tenant_id, property_id, kind, to_phone, body, status, error, created_at, sent_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+        ))
+        .bind(&id)
+        .bind(tenant_id)
+        .bind(property_id)
+        .bind(kind)
+        .bind(phone)
+        .bind(body)
+        .bind(status)
+        .bind(&error)
+        .bind(&now)
+        .bind(&sent_at),
+    )
     .await?;
 
     Ok(Json(row))

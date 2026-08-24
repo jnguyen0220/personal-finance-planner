@@ -251,12 +251,14 @@ pub struct ResolvedCategory {
 
 /// Every category, ordered by position.
 pub async fn all(pool: &SqlitePool) -> Result<Vec<Category>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, CategoryRecord>(
-        "SELECT id, label, parent_id, kind, fields, deductible, applies_rental, \
-                applies_personal, selectable, counts_as_rent, position \
-         FROM categories ORDER BY position",
+    let rows = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, CategoryRecord>(
+            "SELECT id, label, parent_id, kind, fields, deductible, applies_rental, \
+                    applies_personal, selectable, counts_as_rent, position \
+             FROM categories ORDER BY position",
+        ),
     )
-    .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
@@ -266,13 +268,15 @@ pub async fn all(pool: &SqlitePool) -> Result<Vec<Category>, sqlx::Error> {
 
 /// A single category by id.
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Category>, sqlx::Error> {
-    let row = sqlx::query_as::<_, CategoryRecord>(
-        "SELECT id, label, parent_id, kind, fields, deductible, applies_rental, \
-                applies_personal, selectable, counts_as_rent, position \
-         FROM categories WHERE id = ?",
+    let row = crate::db::fetch_optional(
+        pool,
+        sqlx::query_as::<_, CategoryRecord>(
+            "SELECT id, label, parent_id, kind, fields, deductible, applies_rental, \
+                    applies_personal, selectable, counts_as_rent, position \
+             FROM categories WHERE id = ?",
+        )
+        .bind(id),
     )
-    .bind(id)
-    .fetch_optional(pool)
     .await?;
     Ok(row.map(CategoryRecord::into_category))
 }
@@ -302,61 +306,65 @@ pub async fn resolved_for(
 }
 
 pub async fn exists(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
-    Ok(
-        sqlx::query_scalar::<_, i64>("SELECT 1 FROM categories WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?
-            .is_some(),
+    Ok(crate::db::scalar_optional(
+        pool,
+        sqlx::query_scalar::<_, i64>("SELECT 1 FROM categories WHERE id = ?").bind(id),
     )
+    .await?
+    .is_some())
 }
 
 /// Inserts a new category at the end of the ordering.
 pub async fn insert(pool: &SqlitePool, c: &Category) -> Result<Category, sqlx::Error> {
-    let position =
-        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(position) + 1, 0) FROM categories")
-            .fetch_one(pool)
-            .await?;
-    sqlx::query(
-        "INSERT INTO categories (id, label, parent_id, kind, fields, deductible, applies_rental, \
-                                 applies_personal, selectable, counts_as_rent, position) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    let position = crate::db::scalar_one(
+        pool,
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(position) + 1, 0) FROM categories"),
     )
-    .bind(&c.id)
-    .bind(&c.label)
-    .bind(&c.parent_id)
-    .bind(&c.kind)
-    .bind(c.fields.join(","))
-    .bind(c.deductible as i64)
-    .bind(c.applies_rental as i64)
-    .bind(c.applies_personal as i64)
-    .bind(c.selectable as i64)
-    .bind(c.counts_as_rent as i64)
-    .bind(position)
-    .execute(pool)
+    .await?;
+    crate::db::execute(
+        pool,
+        sqlx::query(
+            "INSERT INTO categories (id, label, parent_id, kind, fields, deductible, applies_rental, \
+                                     applies_personal, selectable, counts_as_rent, position) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&c.id)
+        .bind(&c.label)
+        .bind(&c.parent_id)
+        .bind(&c.kind)
+        .bind(c.fields.join(","))
+        .bind(c.deductible as i64)
+        .bind(c.applies_rental as i64)
+        .bind(c.applies_personal as i64)
+        .bind(c.selectable as i64)
+        .bind(c.counts_as_rent as i64)
+        .bind(position),
+    )
     .await?;
     get(pool, &c.id).await.map(|c| c.expect("just inserted"))
 }
 
 /// Updates the mutable attributes of an existing category (the id is the key).
 pub async fn update(pool: &SqlitePool, id: &str, c: &Category) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query(
-        "UPDATE categories SET label = ?, parent_id = ?, kind = ?, fields = ?, deductible = ?, \
-                               applies_rental = ?, applies_personal = ?, selectable = ?, \
-                               counts_as_rent = ? \
-         WHERE id = ?",
+    Ok(crate::db::execute(
+        pool,
+        sqlx::query(
+            "UPDATE categories SET label = ?, parent_id = ?, kind = ?, fields = ?, deductible = ?, \
+                                   applies_rental = ?, applies_personal = ?, selectable = ?, \
+                                   counts_as_rent = ? \
+             WHERE id = ?",
+        )
+        .bind(&c.label)
+        .bind(&c.parent_id)
+        .bind(&c.kind)
+        .bind(c.fields.join(","))
+        .bind(c.deductible as i64)
+        .bind(c.applies_rental as i64)
+        .bind(c.applies_personal as i64)
+        .bind(c.selectable as i64)
+        .bind(c.counts_as_rent as i64)
+        .bind(id),
     )
-    .bind(&c.label)
-    .bind(&c.parent_id)
-    .bind(&c.kind)
-    .bind(c.fields.join(","))
-    .bind(c.deductible as i64)
-    .bind(c.applies_rental as i64)
-    .bind(c.applies_personal as i64)
-    .bind(c.selectable as i64)
-    .bind(c.counts_as_rent as i64)
-    .bind(id)
-    .execute(pool)
     .await?
     .rows_affected())
 }
@@ -364,9 +372,10 @@ pub async fn update(pool: &SqlitePool, id: &str, c: &Category) -> Result<u64, sq
 /// Removes a category. Fails at the database layer if transactions still
 /// reference it (the FK is RESTRICT), preserving data integrity.
 pub async fn remove(pool: &SqlitePool, id: &str) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query("DELETE FROM categories WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?
-        .rows_affected())
+    Ok(crate::db::execute(
+        pool,
+        sqlx::query("DELETE FROM categories WHERE id = ?").bind(id),
+    )
+    .await?
+    .rows_affected())
 }

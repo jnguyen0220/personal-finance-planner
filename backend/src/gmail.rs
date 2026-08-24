@@ -83,12 +83,11 @@ pub async fn poll() -> Result<Vec<Email>, String> {
     let Some(cfg) = Config::from_env() else {
         return Ok(Vec::new());
     };
-    let client = reqwest::Client::new();
-    let token = access_token(&client, &cfg).await?;
+    let token = access_token(&cfg).await?;
 
     let mut emails = Vec::new();
-    for id in list_ids(&client, &token, &cfg).await? {
-        match get_message(&client, &token, &id).await {
+    for id in list_ids(&token, &cfg).await? {
+        match get_message(&token, &id).await {
             Ok(email) => emails.push(email),
             Err(e) => tracing::error!("gmail: failed to fetch message {id}: {e}"),
         }
@@ -97,23 +96,19 @@ pub async fn poll() -> Result<Vec<Email>, String> {
 }
 
 /// Exchanges the refresh token for a short-lived access token.
-async fn access_token(client: &reqwest::Client, cfg: &Config) -> Result<String, String> {
+async fn access_token(cfg: &Config) -> Result<String, String> {
     #[derive(Deserialize)]
     struct TokenResponse {
         access_token: String,
     }
 
-    let resp = client
-        .post(TOKEN_ENDPOINT)
-        .form(&[
-            ("client_id", cfg.client_id.as_str()),
-            ("client_secret", cfg.client_secret.as_str()),
-            ("refresh_token", cfg.refresh_token.as_str()),
-            ("grant_type", "refresh_token"),
-        ])
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = crate::http::send(crate::http::post(TOKEN_ENDPOINT).form(&[
+        ("client_id", cfg.client_id.as_str()),
+        ("client_secret", cfg.client_secret.as_str()),
+        ("refresh_token", cfg.refresh_token.as_str()),
+        ("grant_type", "refresh_token"),
+    ]))
+    .await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -128,11 +123,7 @@ async fn access_token(client: &reqwest::Client, cfg: &Config) -> Result<String, 
 }
 
 /// Lists message IDs matching the configured query.
-async fn list_ids(
-    client: &reqwest::Client,
-    token: &str,
-    cfg: &Config,
-) -> Result<Vec<String>, String> {
+async fn list_ids(token: &str, cfg: &Config) -> Result<Vec<String>, String> {
     #[derive(Deserialize)]
     struct ListResponse {
         #[serde(default)]
@@ -144,13 +135,12 @@ async fn list_ids(
     }
 
     let max = cfg.max_results.to_string();
-    let resp = client
-        .get(format!("{GMAIL_API}/messages"))
-        .bearer_auth(token)
-        .query(&[("q", cfg.query.as_str()), ("maxResults", max.as_str())])
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = crate::http::send(
+        crate::http::get(format!("{GMAIL_API}/messages"))
+            .bearer_auth(token)
+            .query(&[("q", cfg.query.as_str()), ("maxResults", max.as_str())]),
+    )
+    .await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -168,14 +158,13 @@ async fn list_ids(
 }
 
 /// Fetches a single message in full and reduces it to an [`Email`].
-async fn get_message(client: &reqwest::Client, token: &str, id: &str) -> Result<Email, String> {
-    let resp = client
-        .get(format!("{GMAIL_API}/messages/{id}"))
-        .bearer_auth(token)
-        .query(&[("format", "full")])
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+async fn get_message(token: &str, id: &str) -> Result<Email, String> {
+    let resp = crate::http::send(
+        crate::http::get(format!("{GMAIL_API}/messages/{id}"))
+            .bearer_auth(token)
+            .query(&[("format", "full")]),
+    )
+    .await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -195,7 +184,7 @@ async fn get_message(client: &reqwest::Client, token: &str, id: &str) -> Result<
     for r in refs {
         let data = match (r.data, &r.attachment_id) {
             (Some(inline), _) => decode_base64url(&inline),
-            (None, Some(aid)) => fetch_attachment(client, token, id, aid).await?,
+            (None, Some(aid)) => fetch_attachment(token, id, aid).await?,
             (None, None) => continue,
         };
         attachments.push(Attachment {
@@ -207,7 +196,7 @@ async fn get_message(client: &reqwest::Client, token: &str, id: &str) -> Result<
     Ok(to_email(msg, attachments))
 }
 
-/// Whether a MIME type is an image or PDF we can store and OCR.
+/// Whether a MIME type is an image or PDF we can store.
 fn is_supported_attachment(mime: &str) -> bool {
     matches!(
         mime,
@@ -236,7 +225,6 @@ fn collect_attachments(payload: &Payload, out: &mut Vec<AttachmentRef>) {
 
 /// Downloads a single attachment's bytes via the dedicated endpoint.
 async fn fetch_attachment(
-    client: &reqwest::Client,
     token: &str,
     message_id: &str,
     attachment_id: &str,
@@ -246,14 +234,13 @@ async fn fetch_attachment(
         data: Option<String>,
     }
 
-    let resp = client
-        .get(format!(
+    let resp = crate::http::send(
+        crate::http::get(format!(
             "{GMAIL_API}/messages/{message_id}/attachments/{attachment_id}"
         ))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .bearer_auth(token),
+    )
+    .await?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();

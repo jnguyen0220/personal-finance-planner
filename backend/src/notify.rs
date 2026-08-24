@@ -26,45 +26,53 @@ pub struct NewNotification {
 pub async fn create(pool: &SqlitePool, n: NewNotification) -> Result<(), sqlx::Error> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT OR IGNORE INTO notifications \
-         (id, kind, severity, title, body, link, property_id, dedup_key, auto_resolve, created_at, dismissed_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+    crate::db::execute(
+        pool,
+        sqlx::query(
+            "INSERT OR IGNORE INTO notifications \
+             (id, kind, severity, title, body, link, property_id, dedup_key, auto_resolve, created_at, dismissed_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        )
+        .bind(&id)
+        .bind(&n.kind)
+        .bind(&n.severity)
+        .bind(&n.title)
+        .bind(&n.body)
+        .bind(&n.link)
+        .bind(&n.property_id)
+        .bind(&n.dedup_key)
+        .bind(n.auto_resolve as i64)
+        .bind(&now),
     )
-    .bind(&id)
-    .bind(&n.kind)
-    .bind(&n.severity)
-    .bind(&n.title)
-    .bind(&n.body)
-    .bind(&n.link)
-    .bind(&n.property_id)
-    .bind(&n.dedup_key)
-    .bind(n.auto_resolve as i64)
-    .bind(&now)
-    .execute(pool)
     .await?;
     Ok(())
 }
 
 /// Active (non-dismissed) notifications, most severe and most recent first.
 pub async fn list_active(pool: &SqlitePool) -> Result<Vec<Notification>, sqlx::Error> {
-    sqlx::query_as::<_, Notification>(
-        "SELECT id, kind, severity, title, body, link, property_id, created_at \
-         FROM notifications WHERE dismissed_at IS NULL \
-         ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC",
+    crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, Notification>(
+            "SELECT id, kind, severity, title, body, link, property_id, created_at \
+             FROM notifications WHERE dismissed_at IS NULL \
+             ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC",
+        ),
     )
-    .fetch_all(pool)
     .await
 }
 
 /// Marks a notification dismissed. Idempotent: dismissing twice is a no-op.
 pub async fn dismiss(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query("UPDATE notifications SET dismissed_at = ? WHERE id = ? AND dismissed_at IS NULL")
+    crate::db::execute(
+        pool,
+        sqlx::query(
+            "UPDATE notifications SET dismissed_at = ? WHERE id = ? AND dismissed_at IS NULL",
+        )
         .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+        .bind(id),
+    )
+    .await?;
     Ok(())
 }
 
@@ -81,17 +89,20 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         create(pool, n).await?;
     }
 
-    let existing = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT id, dedup_key FROM notifications WHERE auto_resolve = 1",
+    let existing = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, dedup_key FROM notifications WHERE auto_resolve = 1",
+        ),
     )
-    .fetch_all(pool)
     .await?;
     for (id, key) in existing {
         if key.is_none_or(|k| !keys.contains(&k)) {
-            sqlx::query("DELETE FROM notifications WHERE id = ?")
-                .bind(&id)
-                .execute(pool)
-                .await?;
+            crate::db::execute(
+                pool,
+                sqlx::query("DELETE FROM notifications WHERE id = ?").bind(&id),
+            )
+            .await?;
         }
     }
     Ok(())
@@ -128,12 +139,14 @@ async fn insurance_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sql
         settings::NOTIFY_DAYS_DEFAULT,
     )
     .await?;
-    let rows = sqlx::query_as::<_, PolicyRow>(
-        "SELECT i.id, i.property_id, p.name AS property_name, i.provider, i.start_date, i.expiry_date \
-         FROM insurance_policies i JOIN properties p ON p.id = i.property_id \
-         ORDER BY i.expiry_date",
+    let rows = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, PolicyRow>(
+            "SELECT i.id, i.property_id, p.name AS property_name, i.provider, i.start_date, i.expiry_date \
+             FROM insurance_policies i JOIN properties p ON p.id = i.property_id \
+             ORDER BY i.expiry_date",
+        ),
     )
-    .fetch_all(pool)
     .await?;
 
     let today = dates::today().format("%Y-%m-%d").to_string();
@@ -220,15 +233,17 @@ async fn lease_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::E
         settings::NOTIFY_DAYS_DEFAULT,
     )
     .await?;
-    let rows = sqlx::query_as::<_, LeaseRow>(
-        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.property_id, p.name AS property_name, l.start_date, l.end_date \
-         FROM leases l \
-         JOIN tenants t ON t.id = l.tenant_id \
-         JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 \
-         ORDER BY l.start_date",
+    let rows = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, LeaseRow>(
+            "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, t.property_id, p.name AS property_name, l.start_date, l.end_date \
+             FROM leases l \
+             JOIN tenants t ON t.id = l.tenant_id \
+             JOIN properties p ON p.id = t.property_id \
+             WHERE t.is_current = 1 \
+             ORDER BY l.start_date",
+        ),
     )
-    .fetch_all(pool)
     .await?;
 
     let today = dates::today().format("%Y-%m-%d").to_string();
@@ -325,17 +340,19 @@ struct RentDueRow {
 /// due day and still unpaid. Keyed per month so a fresh alert is raised each
 /// month and cleared once payment lands or the month rolls over.
 async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, RentDueRow>(
-        "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, \
-                t.property_id, p.name AS property_name, l.monthly_rent, l.rent_due_day, \
-                l.start_date, l.end_date \
-         FROM leases l \
-         JOIN tenants t ON t.id = l.tenant_id \
-         JOIN properties p ON p.id = t.property_id \
-         WHERE t.is_current = 1 AND l.rent_due_day IS NOT NULL AND l.monthly_rent > 0 \
-         ORDER BY l.start_date",
+    let rows = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, RentDueRow>(
+            "SELECT l.id, l.tenant_id, trim(t.first_name || ' ' || t.last_name) AS tenant_name, \
+                    t.property_id, p.name AS property_name, l.monthly_rent, l.rent_due_day, \
+                    l.start_date, l.end_date \
+             FROM leases l \
+             JOIN tenants t ON t.id = l.tenant_id \
+             JOIN properties p ON p.id = t.property_id \
+             WHERE t.is_current = 1 AND l.rent_due_day IS NOT NULL AND l.monthly_rent > 0 \
+             ORDER BY l.start_date",
+        ),
     )
-    .fetch_all(pool)
     .await?;
 
     // Keep only the lease covering the current month, latest start wins per tenant.
@@ -364,15 +381,17 @@ async fn rent_alerts(pool: &SqlitePool) -> Result<Vec<NewNotification>, sqlx::Er
 
     // Rent credited toward the current month, per property.
     let month_prefix = dates::today().format("%Y-%m").to_string();
-    let paid_rows = sqlx::query_as::<_, (String, f64)>(&format!(
-        "SELECT t.property_id, CAST(COALESCE(SUM(t.amount), 0) AS REAL) \
-         FROM transactions t \
-         JOIN categories c ON c.id = t.category_id \
-         WHERE substr(t.date, 1, 7) = ? AND ({RENT_PAID_PREDICATE}) \
-         GROUP BY t.property_id"
-    ))
-    .bind(&month_prefix)
-    .fetch_all(pool)
+    let paid_rows = crate::db::fetch_all(
+        pool,
+        sqlx::query_as::<_, (String, f64)>(&format!(
+            "SELECT t.property_id, CAST(COALESCE(SUM(t.amount), 0) AS REAL) \
+             FROM transactions t \
+             JOIN categories c ON c.id = t.category_id \
+             WHERE substr(t.date, 1, 7) = ? AND ({RENT_PAID_PREDICATE}) \
+             GROUP BY t.property_id"
+        ))
+        .bind(&month_prefix),
+    )
     .await?;
     let paid: HashMap<String, f64> = paid_rows.into_iter().collect();
 

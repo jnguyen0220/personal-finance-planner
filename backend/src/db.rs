@@ -1,8 +1,132 @@
 use std::time::Duration;
 
+use sqlx::query::{Query, QueryAs, QueryScalar};
 use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+    Sqlite, SqliteArguments, SqliteConnectOptions, SqliteJournalMode, SqlitePool,
+    SqlitePoolOptions, SqliteQueryResult, SqliteRow, SqliteSynchronous,
 };
+use sqlx::{Execute, Executor, FromRow};
+
+// ---------------------------------------------------------------------------
+// Database gateway
+//
+// Every read and write in the application funnels through the handful of
+// functions below. They are the single "in" and "out" for the database, so
+// query logging, timing, and future instrumentation live in exactly one place.
+// Callers build an ordinary sqlx query/query_as/query_scalar and hand it here
+// instead of calling `.execute`/`.fetch_*` on a pool directly.
+// ---------------------------------------------------------------------------
+
+/// A prepared statement bound to Sqlite, ready to run through the gateway.
+pub type Sql<'q> = Query<'q, Sqlite, SqliteArguments<'q>>;
+/// A prepared statement that maps rows into `T`.
+pub type SqlAs<'q, T> = QueryAs<'q, Sqlite, T, SqliteArguments<'q>>;
+/// A prepared statement that reads a single scalar column into `T`.
+pub type SqlScalar<'q, T> = QueryScalar<'q, Sqlite, T, SqliteArguments<'q>>;
+
+/// Runs a statement for its side effect, returning the driver result.
+pub async fn execute<'q, 'e, 'c, E>(
+    exec: E,
+    query: Sql<'q>,
+) -> Result<SqliteQueryResult, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: Executor<'c, Database = Sqlite>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "execute");
+    query.execute(exec).await
+}
+
+/// Runs a row-mapping query and collects every row.
+pub async fn fetch_all<'q, 'e, 'c, E, T>(
+    exec: E,
+    query: SqlAs<'q, T>,
+) -> Result<Vec<T>, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: 'e + Executor<'c, Database = Sqlite>,
+    T: 'e + Send + Unpin + for<'r> FromRow<'r, SqliteRow>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "fetch_all");
+    query.fetch_all(exec).await
+}
+
+/// Runs a row-mapping query expecting exactly one row.
+pub async fn fetch_one<'q, 'e, 'c, E, T>(exec: E, query: SqlAs<'q, T>) -> Result<T, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: 'e + Executor<'c, Database = Sqlite>,
+    T: 'e + Send + Unpin + for<'r> FromRow<'r, SqliteRow>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "fetch_one");
+    query.fetch_one(exec).await
+}
+
+/// Runs a row-mapping query that may return zero or one row.
+pub async fn fetch_optional<'q, 'e, 'c, E, T>(
+    exec: E,
+    query: SqlAs<'q, T>,
+) -> Result<Option<T>, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: 'e + Executor<'c, Database = Sqlite>,
+    T: 'e + Send + Unpin + for<'r> FromRow<'r, SqliteRow>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "fetch_optional");
+    query.fetch_optional(exec).await
+}
+
+/// Runs a scalar query and collects every value.
+pub async fn scalar_all<'q, 'e, 'c, E, T>(
+    exec: E,
+    query: SqlScalar<'q, T>,
+) -> Result<Vec<T>, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: 'e + Executor<'c, Database = Sqlite>,
+    T: 'e + Send + Unpin,
+    (T,): Send + Unpin + for<'r> FromRow<'r, SqliteRow>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "scalar_all");
+    query.fetch_all(exec).await
+}
+
+/// Runs a scalar query expecting exactly one value.
+pub async fn scalar_one<'q, 'e, 'c, E, T>(
+    exec: E,
+    query: SqlScalar<'q, T>,
+) -> Result<T, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: 'e + Executor<'c, Database = Sqlite>,
+    T: 'e + Send + Unpin,
+    (T,): Send + Unpin + for<'r> FromRow<'r, SqliteRow>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "scalar_one");
+    query.fetch_one(exec).await
+}
+
+/// Runs a scalar query that may return zero or one value.
+pub async fn scalar_optional<'q, 'e, 'c, E, T>(
+    exec: E,
+    query: SqlScalar<'q, T>,
+) -> Result<Option<T>, sqlx::Error>
+where
+    'q: 'e,
+    'c: 'e,
+    E: 'e + Executor<'c, Database = Sqlite>,
+    T: 'e + Send + Unpin,
+    (T,): Send + Unpin + for<'r> FromRow<'r, SqliteRow>,
+{
+    tracing::debug!(target: "db", sql = query.sql(), "scalar_optional");
+    query.fetch_optional(exec).await
+}
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS properties (
@@ -172,9 +296,6 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     snippet        TEXT NOT NULL DEFAULT '',
     received_at    TEXT NOT NULL DEFAULT '',
     attachment_id  TEXT REFERENCES attachments(id) ON DELETE SET NULL,
-    ocr_text       TEXT NOT NULL DEFAULT '',
-    ocr_amount     REAL,
-    ocr_status     TEXT,
     status         TEXT NOT NULL DEFAULT 'pending',
     transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
     created_at     TEXT NOT NULL
@@ -453,15 +574,6 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_dedup ON messages(dedup_key)")
         .execute(pool)
         .await?;
-
-    // Traffic-light OCR outcome for review items (success/no_detection/failed).
-    add_column_if_missing(
-        pool,
-        "inbox_items",
-        "ocr_status",
-        "ALTER TABLE inbox_items ADD COLUMN ocr_status TEXT",
-    )
-    .await?;
 
     // Backfill the tenant name from the legacy tenant_id link on older databases.
     if column_exists(pool, "transactions", "tenant_id").await? {

@@ -5,7 +5,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   categoriesQueryOptions,
-  formatCurrency,
   formatDateTime,
   type InboxItem,
   type Property,
@@ -99,62 +98,6 @@ export default function InboxReview() {
   );
 }
 
-/// A traffic-light indicator of how OCR fared on an invoice attachment: green
-/// when a total was detected, orange when it ran without finding one, and red
-/// when extraction failed. Items ingested before OCR status was tracked show a
-/// neutral light, inferring success only when an amount is present.
-function OcrStatusLight({
-  status: rawStatus,
-  amount,
-}: {
-  status: string | null;
-  amount: number | null;
-}) {
-  const status = rawStatus ?? (amount != null ? "success" : "unknown");
-
-  const variants: Record<string, { color: string; label: ReactNode }> = {
-    success: {
-      color: "bg-green-500",
-      label:
-        amount != null ? (
-          <>
-            OCR read a total of{" "}
-            <span className="font-medium text-[var(--foreground)]">
-              {formatCurrency(amount)}
-            </span>{" "}
-            — confirm before assigning.
-          </>
-        ) : (
-          "OCR extracted text — confirm the amount before assigning."
-        ),
-    },
-    no_detection: {
-      color: "bg-amber-500",
-      label: "OCR ran but found no amount — enter it manually.",
-    },
-    failed: {
-      color: "bg-red-500",
-      label: "OCR didn't complete — enter the amount manually.",
-    },
-    unknown: {
-      color: "bg-gray-400",
-      label: "OCR status unavailable — enter the amount manually.",
-    },
-  };
-
-  const variant = variants[status] ?? variants.unknown;
-
-  return (
-    <p className="flex items-center gap-2 text-xs text-[var(--muted)]">
-      <span
-        className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${variant.color}`}
-        aria-hidden
-      />
-      <span>{variant.label}</span>
-    </p>
-  );
-}
-
 function InboxCard({
   item,
   properties,
@@ -177,11 +120,7 @@ function InboxCard({
   );
 
   const [categoryId, setCategoryId] = useState("");
-  const [amount, setAmount] = useState(
-    item.ocr_amount != null ? String(item.ocr_amount) : "",
-  );
-  const [ocrStatus, setOcrStatus] = useState(item.ocr_status);
-  const [ocrAmount, setOcrAmount] = useState(item.ocr_amount);
+  const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today());
   const [description, setDescription] = useState(item.subject);
   const [err, setErr] = useState<string | null>(null);
@@ -196,19 +135,6 @@ function InboxCard({
         description,
       }),
     onSuccess: onDone,
-    onError: (e) => setErr((e as Error).message),
-  });
-
-  const rerunOcr = useMutation({
-    mutationFn: () => api.rerunOcr(item.id),
-    onSuccess: (updated) => {
-      setOcrStatus(updated.ocr_status);
-      setOcrAmount(updated.ocr_amount);
-      if (updated.ocr_amount != null) {
-        setAmount(String(updated.ocr_amount));
-      }
-      setErr(null);
-    },
     onError: (e) => setErr((e as Error).message),
   });
 
@@ -235,20 +161,6 @@ function InboxCard({
               {item.from_addr}
             </p>
           </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <OcrStatusLight status={ocrStatus} amount={ocrAmount} />
-            <button
-              type="button"
-              onClick={() => rerunOcr.mutate()}
-              disabled={rerunOcr.isPending || busy || !item.attachment_id}
-              className="shrink-0 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-2)] disabled:opacity-50"
-            >
-              {rerunOcr.isPending ? "Running OCR…" : "Run OCR"}
-            </button>
-          </div>
-
-
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Property">

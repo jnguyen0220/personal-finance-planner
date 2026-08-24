@@ -35,10 +35,11 @@ pub const TEMPLATES: &[TemplateDef] = &[
             Placeholder { token: "state", description: "Property state" },
             Placeholder { token: "zip", description: "Property ZIP code" },
             Placeholder { token: "balance", description: "Amount owed, e.g. $1,200.00" },
-            Placeholder { token: "year", description: "Year the balance is for" },
+            Placeholder { token: "month", description: "Current month, e.g. August 2026" },
+            Placeholder { token: "late_fee", description: "Late-fee sentence (blank when none)" },
             Placeholder { token: "signature", description: "Your sign-off (set on the Admin page)" },
         ],
-        default_body: "Hi {tenant_name}, our records show an outstanding balance of {balance} for {year}. Please arrange payment at your earliest convenience. Thank you.\n\n{signature}",
+        default_body: "Hi {tenant_name}, our records show an outstanding balance of {balance} as of {month}.{late_fee} Please arrange payment at your earliest convenience. Thank you.\n\n{signature}",
     },
     TemplateDef {
         kind: "lease_expiring",

@@ -20,15 +20,3 @@ reqwest = { version = "0.12", default-features = false, features = [
     "native-tls",
 ] }
 base64 = "0.22"
-image = { version = "0.25", default-features = false, features = [
-    "jpeg",
-    "png",
-    "gif",
-    "webp",
-] }
-
-# Image decoding/resizing is unusably slow in unoptimized debug builds; optimize
-# all dependencies in dev so OCR preprocessing stays fast. Our own crate stays
-# unoptimized for quick incremental builds.
-[profile.dev.package."*"]
-opt-level = 3

@@ -16,22 +16,25 @@ const SELECT: &str =
      FROM transactions t JOIN categories c ON c.id = t.category_id";
 
 async fn fetch_transaction(pool: &SqlitePool, id: &str) -> AppResult<Transaction> {
-    sqlx::query_as::<_, Transaction>(&format!("{SELECT} WHERE t.id = ?"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or(AppError::NotFound)
+    crate::db::fetch_optional(
+        pool,
+        sqlx::query_as::<_, Transaction>(&format!("{SELECT} WHERE t.id = ?")).bind(id),
+    )
+    .await?
+    .ok_or(AppError::NotFound)
 }
 
 pub async fn list_for_property(
     State(st): State<AppState>,
     Path(property_id): Path<String>,
 ) -> AppResult<Json<Vec<Transaction>>> {
-    let rows = sqlx::query_as::<_, Transaction>(&format!(
-        "{SELECT} WHERE t.property_id = ? ORDER BY t.date DESC, t.created_at DESC"
-    ))
-    .bind(&property_id)
-    .fetch_all(&st.pool)
+    let rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, Transaction>(&format!(
+            "{SELECT} WHERE t.property_id = ? ORDER BY t.date DESC, t.created_at DESC"
+        ))
+        .bind(&property_id),
+    )
     .await?;
     Ok(Json(rows))
 }
@@ -85,31 +88,35 @@ pub(crate) async fn create_from(
     if input.date.trim().is_empty() {
         return Err(AppError::BadRequest("date is required".into()));
     }
-    let property_kind = sqlx::query_scalar::<_, String>("SELECT kind FROM properties WHERE id = ?")
-        .bind(property_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let property_kind = crate::db::scalar_optional(
+        pool,
+        sqlx::query_scalar::<_, String>("SELECT kind FROM properties WHERE id = ?")
+            .bind(property_id),
+    )
+    .await?
+    .ok_or(AppError::NotFound)?;
     let (kind, borne_by) = resolve(pool, input, &property_kind).await?;
 
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO transactions (id, property_id, kind, category_id, amount, date, description, tenant_name, borne_by, receipt_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    crate::db::execute(
+        pool,
+        sqlx::query(
+            "INSERT INTO transactions (id, property_id, kind, category_id, amount, date, description, tenant_name, borne_by, receipt_id, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(property_id)
+        .bind(&kind)
+        .bind(&input.category_id)
+        .bind(input.amount)
+        .bind(&input.date)
+        .bind(&input.description)
+        .bind(&input.tenant_name)
+        .bind(&borne_by)
+        .bind(&input.receipt_id)
+        .bind(&now),
     )
-    .bind(&id)
-    .bind(property_id)
-    .bind(&kind)
-    .bind(&input.category_id)
-    .bind(input.amount)
-    .bind(&input.date)
-    .bind(&input.description)
-    .bind(&input.tenant_name)
-    .bind(&borne_by)
-    .bind(&input.receipt_id)
-    .bind(&now)
-    .execute(pool)
     .await?;
     fetch_transaction(pool, &id).await
 }
@@ -119,36 +126,41 @@ pub async fn update(
     Path(id): Path<String>,
     Json(input): Json<TransactionInput>,
 ) -> AppResult<Json<Transaction>> {
-    let property_kind = sqlx::query_scalar::<_, String>(
-        "SELECT p.kind FROM transactions t JOIN properties p ON p.id = t.property_id WHERE t.id = ?",
+    let property_kind = crate::db::scalar_optional(
+        &st.pool,
+        sqlx::query_scalar::<_, String>(
+            "SELECT p.kind FROM transactions t JOIN properties p ON p.id = t.property_id WHERE t.id = ?",
+        )
+        .bind(&id),
     )
-    .bind(&id)
-    .fetch_optional(&st.pool)
     .await?
     .ok_or(AppError::NotFound)?;
     let (kind, borne_by) = resolve(&st.pool, &input, &property_kind).await?;
 
-    let old_receipt =
+    let old_receipt = crate::db::scalar_optional(
+        &st.pool,
         sqlx::query_scalar::<_, Option<String>>("SELECT receipt_id FROM transactions WHERE id = ?")
-            .bind(&id)
-            .fetch_optional(&st.pool)
-            .await?
-            .flatten();
-
-    let affected = sqlx::query(
-        "UPDATE transactions SET kind = ?, category_id = ?, amount = ?, date = ?, description = ?, tenant_name = ?, borne_by = ?, receipt_id = ? \
-         WHERE id = ?",
+            .bind(&id),
     )
-    .bind(&kind)
-    .bind(&input.category_id)
-    .bind(input.amount)
-    .bind(&input.date)
-    .bind(&input.description)
-    .bind(&input.tenant_name)
-    .bind(&borne_by)
-    .bind(&input.receipt_id)
-    .bind(&id)
-    .execute(&st.pool)
+    .await?
+    .flatten();
+
+    let affected = crate::db::execute(
+        &st.pool,
+        sqlx::query(
+            "UPDATE transactions SET kind = ?, category_id = ?, amount = ?, date = ?, description = ?, tenant_name = ?, borne_by = ?, receipt_id = ? \
+             WHERE id = ?",
+        )
+        .bind(&kind)
+        .bind(&input.category_id)
+        .bind(input.amount)
+        .bind(&input.date)
+        .bind(&input.description)
+        .bind(&input.tenant_name)
+        .bind(&borne_by)
+        .bind(&input.receipt_id)
+        .bind(&id),
+    )
     .await?
     .rows_affected();
     if affected == 0 {
@@ -167,12 +179,13 @@ pub async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<axum::http::StatusCode> {
-    let receipt_id =
+    let receipt_id = crate::db::scalar_optional(
+        &st.pool,
         sqlx::query_scalar::<_, Option<String>>("SELECT receipt_id FROM transactions WHERE id = ?")
-            .bind(&id)
-            .fetch_optional(&st.pool)
-            .await?
-            .flatten();
+            .bind(&id),
+    )
+    .await?
+    .flatten();
     let status = delete_by_id(&st, "transactions", &id).await?;
     if let Some(rid) = receipt_id {
         delete_attachment(&st, &rid).await?;

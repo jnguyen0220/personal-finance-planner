@@ -92,11 +92,11 @@ pub async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<axum::http::StatusCode> {
-    let in_use = sqlx::query_scalar::<_, i64>(
-        "SELECT 1 FROM transactions WHERE category_id = ? LIMIT 1",
+    let in_use = crate::db::scalar_optional(
+        &st.pool,
+        sqlx::query_scalar::<_, i64>("SELECT 1 FROM transactions WHERE category_id = ? LIMIT 1")
+            .bind(&id),
     )
-    .bind(&id)
-    .fetch_optional(&st.pool)
     .await?
     .is_some();
     if in_use {

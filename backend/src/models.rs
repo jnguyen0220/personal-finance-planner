@@ -378,7 +378,7 @@ pub struct Attachment {
 }
 
 /// An inbound invoice attachment awaiting review. Joins its attachment so the
-/// UI can preview the file and its OCR-suggested amount before assignment.
+/// UI can preview the file before assignment.
 #[derive(Serialize, FromRow)]
 pub struct InboxItem {
     pub id: String,
@@ -391,8 +391,6 @@ pub struct InboxItem {
     pub attachment_id: Option<String>,
     pub attachment_name: Option<String>,
     pub attachment_type: Option<String>,
-    pub ocr_amount: Option<f64>,
-    pub ocr_status: Option<String>,
     pub status: String,
     pub created_at: String,
 }
