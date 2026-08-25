@@ -264,10 +264,10 @@ pub async fn overview(
     )
     .await?;
 
-    let sum_map = income_expense_by_property(st, &year).await?;
-    let spans_by_prop = current_lease_spans_by_property(st).await?;
-    let paid_map = rent_paid_by_property_year(st).await?;
-    let tenant_map = current_tenant_names(st).await?;
+    let sum_map = income_expense_by_property(&st, &year).await?;
+    let spans_by_prop = current_lease_spans_by_property(&st).await?;
+    let paid_map = rent_paid_by_property_year(&st).await?;
+    let tenant_map = current_tenant_names(&st).await?;
 
     let empty_paid = HashMap::new();
     let empty_spans: Vec<LeaseSpan> = Vec::new();
