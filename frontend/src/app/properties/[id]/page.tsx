@@ -3,7 +3,14 @@
 import { useParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, categoriesQueryOptions, formatCurrency, formatPhone, formatPropertyAddress } from "@/lib/api";
+import {
+  api,
+  categoriesQueryOptions,
+  formatCurrency,
+  formatPhone,
+  formatPropertyAddress,
+  yearsQueryOptions,
+} from "@/lib/api";
 import { TransactionsTab } from "@/features/transactions/TransactionsTab";
 import { TenantsTab } from "@/features/tenants/TenantsTab";
 import { InsuranceTab } from "@/features/insurance/InsuranceTab";
@@ -74,14 +81,11 @@ export default function PropertyDetail() {
     });
   }, [queryClient, id]);
 
+  const { data: activeYears = [] } = useQuery(yearsQueryOptions);
   const yearOptions = useMemo(() => {
-    const set = new Set<number>([new Date().getFullYear()]);
-    for (const t of transactions) {
-      const y = Number(t.date.slice(0, 4));
-      if (!Number.isNaN(y)) set.add(y);
-    }
+    const set = new Set<number>([new Date().getFullYear(), ...activeYears]);
     return Array.from(set).sort((a, b) => b - a);
-  }, [transactions]);
+  }, [activeYears]);
 
   const filteredTransactions = useMemo(
     () =>

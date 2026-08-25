@@ -40,29 +40,13 @@ pub async fn create(
     validate_zip(&input.zip)?;
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let row = crate::db::fetch_one(
-        &st.pool,
-        sqlx::query_as::<_, Property>(&format!(
-            "INSERT INTO properties (id, name, address, city, state, zip, kind, reminders_enabled, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
-        ))
-        .bind(&id)
-        .bind(input.name.trim())
-        .bind(&input.address)
-        .bind(&input.city)
-        .bind(&input.state)
-        .bind(&input.zip)
-        .bind(&input.kind)
-        .bind(input.reminders_enabled)
-        .bind(&input.purchase_date)
-        .bind(&input.notes)
-        .bind(&input.hoa_name)
-        .bind(&input.hoa_phone)
-        .bind(&input.hoa_email)
-        .bind(&input.hoa_webpage)
-        .bind(&now),
-    )
-    .await?;
+    let sql = format!(
+        "INSERT INTO properties (id, name, address, city, state, zip, kind, reminders_enabled, purchase_date, notes, hoa_name, hoa_phone, hoa_email, hoa_webpage, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {COLUMNS}"
+    );
+    let query = sqlx::query_as::<_, Property>(&sql).bind(&id);
+    let query = bind_property_input(query, &input).bind(&now);
+    let row = crate::db::fetch_one(&st.pool, query).await?;
     Ok(Json(row))
 }
 
@@ -72,12 +56,25 @@ pub async fn update(
     Json(input): Json<PropertyInput>,
 ) -> AppResult<Json<Property>> {
     validate_zip(&input.zip)?;
-    let row = crate::db::fetch_optional(
-        &st.pool,
-        sqlx::query_as::<_, Property>(&format!(
-            "UPDATE properties SET name = ?, address = ?, city = ?, state = ?, zip = ?, kind = ?, reminders_enabled = ?, purchase_date = ?, notes = ?, hoa_name = ?, hoa_phone = ?, hoa_email = ?, hoa_webpage = ? \
-             WHERE id = ? RETURNING {COLUMNS}"
-        ))
+    let sql = format!(
+        "UPDATE properties SET name = ?, address = ?, city = ?, state = ?, zip = ?, kind = ?, reminders_enabled = ?, purchase_date = ?, notes = ?, hoa_name = ?, hoa_phone = ?, hoa_email = ?, hoa_webpage = ? \
+         WHERE id = ? RETURNING {COLUMNS}"
+    );
+    let query = sqlx::query_as::<_, Property>(&sql);
+    let row = crate::db::fetch_optional(&st.pool, bind_property_input(query, &input).bind(&id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(row))
+}
+
+/// Binds the editable property columns in schema order onto an INSERT or UPDATE
+/// query, so `create` and `update` share one bind list. Callers bind the `id`
+/// (and `created_at` on insert) around this in the position their SQL expects.
+fn bind_property_input<'q>(
+    query: crate::db::SqlAs<'q, Property>,
+    input: &'q PropertyInput,
+) -> crate::db::SqlAs<'q, Property> {
+    query
         .bind(input.name.trim())
         .bind(&input.address)
         .bind(&input.city)
@@ -91,11 +88,6 @@ pub async fn update(
         .bind(&input.hoa_phone)
         .bind(&input.hoa_email)
         .bind(&input.hoa_webpage)
-        .bind(&id),
-    )
-    .await?
-    .ok_or(AppError::NotFound)?;
-    Ok(Json(row))
 }
 
 /// Zip is optional; when present it must be exactly 5 digits.
@@ -272,74 +264,10 @@ pub async fn overview(
     )
     .await?;
 
-    let sums = crate::db::fetch_all(
-        &st.pool,
-        sqlx::query_as::<_, (String, f64, f64)>(
-            "SELECT property_id, \
-                CAST(COALESCE(SUM(CASE WHEN kind = 'income'  THEN amount ELSE 0 END), 0) AS REAL), \
-                CAST(COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS REAL) \
-             FROM transactions \
-             WHERE (?1 IS NULL OR substr(date, 1, 4) = ?1) \
-             GROUP BY property_id",
-        )
-        .bind(&year),
-    )
-    .await?;
-    let sum_map: HashMap<String, (f64, f64)> = sums
-        .into_iter()
-        .map(|(id, inc, exp)| (id, (inc, exp)))
-        .collect();
-
-    // Leases of the current tenant, grouped by property.
-    let lease_rows = crate::db::fetch_all(
-        &st.pool,
-        sqlx::query_as::<_, (String, f64, Option<String>, Option<String>, Option<i64>)>(
-            "SELECT t.property_id, l.monthly_rent, l.start_date, l.end_date, l.rent_due_day \
-             FROM leases l JOIN tenants t ON t.id = l.tenant_id WHERE t.is_current = 1",
-        ),
-    )
-    .await?;
-    let mut spans_by_prop: HashMap<String, Vec<LeaseSpan>> = HashMap::new();
-    for (pid, rent, sd, ed, due) in lease_rows {
-        if let Some(span) = lease_span(rent, sd.as_deref(), ed.as_deref(), due) {
-            spans_by_prop.entry(pid).or_default().push(span);
-        }
-    }
-
-    let paid_rows = crate::db::fetch_all(
-        &st.pool,
-        sqlx::query_as::<_, (String, String, f64)>(&format!(
-            "SELECT t.property_id, substr(t.date, 1, 4) AS y, CAST(SUM(t.amount) AS REAL) \
-             FROM transactions t \
-             JOIN categories c ON c.id = t.category_id \
-             WHERE {RENT_PAID_PREDICATE} \
-             GROUP BY t.property_id, y"
-        )),
-    )
-    .await?;
-    let mut paid_map: HashMap<String, HashMap<i32, f64>> = HashMap::new();
-    for (pid, y, amt) in paid_rows {
-        if let Ok(yr) = y.parse::<i32>() {
-            paid_map.entry(pid).or_default().insert(yr, amt);
-        }
-    }
-
-    // Most recently added current tenant per property.
-    let tenant_rows = crate::db::fetch_all(
-        &st.pool,
-        sqlx::query_as::<_, (String, String)>(
-            "SELECT property_id, trim(first_name || ' ' || last_name) AS name \
-             FROM tenants WHERE is_current = 1 ORDER BY created_at ASC",
-        ),
-    )
-    .await?;
-    let mut tenant_map: HashMap<String, String> = HashMap::new();
-    for (pid, name) in tenant_rows {
-        let name = name.trim().to_string();
-        if !name.is_empty() {
-            tenant_map.insert(pid, name);
-        }
-    }
+    let sum_map = income_expense_by_property(st, &year).await?;
+    let spans_by_prop = current_lease_spans_by_property(st).await?;
+    let paid_map = rent_paid_by_property_year(st).await?;
+    let tenant_map = current_tenant_names(st).await?;
 
     let empty_paid = HashMap::new();
     let empty_spans: Vec<LeaseSpan> = Vec::new();
@@ -365,6 +293,95 @@ pub async fn overview(
 
     let totals = portfolio_totals(&rows);
     Ok(Json(OverviewResponse { rows, totals }))
+}
+
+/// Income and expense totals per property for the optional year filter.
+async fn income_expense_by_property(
+    st: &AppState,
+    year: &Option<String>,
+) -> AppResult<HashMap<String, (f64, f64)>> {
+    let rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (String, f64, f64)>(
+            "SELECT property_id, \
+                CAST(COALESCE(SUM(CASE WHEN kind = 'income'  THEN amount ELSE 0 END), 0) AS REAL), \
+                CAST(COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS REAL) \
+             FROM transactions \
+             WHERE (?1 IS NULL OR substr(date, 1, 4) = ?1) \
+             GROUP BY property_id",
+        )
+        .bind(year),
+    )
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, inc, exp)| (id, (inc, exp)))
+        .collect())
+}
+
+/// Lease spans of every property's current tenant, grouped by property.
+async fn current_lease_spans_by_property(
+    st: &AppState,
+) -> AppResult<HashMap<String, Vec<LeaseSpan>>> {
+    let lease_rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (String, f64, Option<String>, Option<String>, Option<i64>)>(
+            "SELECT t.property_id, l.monthly_rent, l.start_date, l.end_date, l.rent_due_day \
+             FROM leases l JOIN tenants t ON t.id = l.tenant_id WHERE t.is_current = 1",
+        ),
+    )
+    .await?;
+    let mut spans_by_prop: HashMap<String, Vec<LeaseSpan>> = HashMap::new();
+    for (pid, rent, sd, ed, due) in lease_rows {
+        if let Some(span) = lease_span(rent, sd.as_deref(), ed.as_deref(), due) {
+            spans_by_prop.entry(pid).or_default().push(span);
+        }
+    }
+    Ok(spans_by_prop)
+}
+
+/// Rent paid per property per year, keyed `property_id -> year -> amount`.
+async fn rent_paid_by_property_year(
+    st: &AppState,
+) -> AppResult<HashMap<String, HashMap<i32, f64>>> {
+    let paid_rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (String, String, f64)>(&format!(
+            "SELECT t.property_id, substr(t.date, 1, 4) AS y, CAST(SUM(t.amount) AS REAL) \
+             FROM transactions t \
+             JOIN categories c ON c.id = t.category_id \
+             WHERE {RENT_PAID_PREDICATE} \
+             GROUP BY t.property_id, y"
+        )),
+    )
+    .await?;
+    let mut paid_map: HashMap<String, HashMap<i32, f64>> = HashMap::new();
+    for (pid, y, amt) in paid_rows {
+        if let Ok(yr) = y.parse::<i32>() {
+            paid_map.entry(pid).or_default().insert(yr, amt);
+        }
+    }
+    Ok(paid_map)
+}
+
+/// The most recently added current tenant's display name per property.
+async fn current_tenant_names(st: &AppState) -> AppResult<HashMap<String, String>> {
+    let tenant_rows = crate::db::fetch_all(
+        &st.pool,
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT property_id, trim(first_name || ' ' || last_name) AS name \
+             FROM tenants WHERE is_current = 1 ORDER BY created_at ASC",
+        ),
+    )
+    .await?;
+    let mut tenant_map: HashMap<String, String> = HashMap::new();
+    for (pid, name) in tenant_rows {
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            tenant_map.insert(pid, name);
+        }
+    }
+    Ok(tenant_map)
 }
 
 /// Year-end tax report: per-rental income/expense broken down by category, plus
