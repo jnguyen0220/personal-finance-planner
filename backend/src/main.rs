@@ -6,6 +6,7 @@ mod etag;
 mod gmail;
 mod handlers;
 mod http;
+mod logs;
 mod messaging;
 mod models;
 mod notify;
@@ -66,11 +67,27 @@ async fn main() {
             .await
             .unwrap_or(true);
             if reminders_on {
-                if let Err(e) = notify::reconcile(&scheduler_state.pool).await {
-                    tracing::error!("daily notification reconcile failed: {e}");
+                match notify::reconcile(&scheduler_state.pool).await {
+                    Ok(()) => logs::clear_failure(&scheduler_state.pool, "notifications").await,
+                    Err(e) => {
+                        logs::record_failure(
+                            &scheduler_state.pool,
+                            "notifications",
+                            &format!("daily notification reconcile failed: {e}"),
+                        )
+                        .await
+                    }
                 }
-                if let Err(e) = messaging::run(&scheduler_state).await {
-                    tracing::error!("daily automated messaging failed: {e}");
+                match messaging::run(&scheduler_state).await {
+                    Ok(()) => logs::clear_failure(&scheduler_state.pool, "messaging").await,
+                    Err(e) => {
+                        logs::record_failure(
+                            &scheduler_state.pool,
+                            "messaging",
+                            &format!("daily automated messaging failed: {e}"),
+                        )
+                        .await
+                    }
                 }
             }
             let email_on =
@@ -78,8 +95,16 @@ async fn main() {
                     .await
                     .unwrap_or(true);
             if email_on && gmail::configured() {
-                if let Err(e) = handlers::inbox::poll_and_ingest(&scheduler_state).await {
-                    tracing::error!("daily gmail poll failed: {e}");
+                match handlers::inbox::poll_and_ingest(&scheduler_state).await {
+                    Ok(_) => logs::clear_failure(&scheduler_state.pool, "gmail_poll").await,
+                    Err(e) => {
+                        logs::record_failure(
+                            &scheduler_state.pool,
+                            "gmail_poll",
+                            &format!("daily gmail poll failed: {e}"),
+                        )
+                        .await
+                    }
                 }
             }
         }
@@ -120,6 +145,10 @@ async fn main() {
         .route(
             "/api/notifications/:id/dismiss",
             post(handlers::notifications::dismiss),
+        )
+        .route(
+            "/api/admin/logs",
+            get(handlers::logs::list).delete(handlers::logs::clear),
         )
         .route("/api/properties", post(handlers::properties::create))
         .route("/api/overview", get(handlers::properties::overview))

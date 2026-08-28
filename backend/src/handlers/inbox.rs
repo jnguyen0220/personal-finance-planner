@@ -94,8 +94,10 @@ pub async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) -> AppR
 
     crate::db::execute(
         &st.pool,
-        sqlx::query("UPDATE inbox_items SET status = 'dismissed', attachment_id = NULL WHERE id = ?")
-            .bind(&id),
+        sqlx::query(
+            "UPDATE inbox_items SET status = 'dismissed', attachment_id = NULL WHERE id = ?",
+        )
+        .bind(&id),
     )
     .await?;
     if let Some(aid) = attachment_id {
@@ -131,7 +133,17 @@ pub async fn poll_and_ingest(st: &AppState) -> Result<usize, String> {
     if !gmail::configured() {
         return Ok(0);
     }
-    let emails = gmail::poll().await?;
+    // Stamp the checkpoint for every attempt, before propagating any fetch error,
+    // so the invoice UI's "last checked" indicator reflects each poll — including
+    // the unattended daily scheduler run that would otherwise silently bail on a
+    // transient Gmail error and leave the indicator frozen at the last manual poll.
+    let poll = gmail::poll().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    settings::set_string(&st.pool, settings::GMAIL_LAST_POLL, &now)
+        .await
+        .map_err(|e| e.to_string())?;
+    let emails = poll?;
+
     let mut total = 0;
     for email in &emails {
         match ingest(st, email).await {
@@ -146,16 +158,18 @@ pub async fn poll_and_ingest(st: &AppState) -> Result<usize, String> {
                 );
                 total += n;
             }
-            Err(err) => tracing::error!(id = %email.id, "gmail: failed to ingest email: {err}"),
+            Err(err) => {
+                tracing::error!(id = %email.id, "gmail: failed to ingest email: {err}");
+                crate::logs::record(
+                    &st.pool,
+                    crate::logs::WARNING,
+                    "gmail_poll",
+                    &format!("failed to ingest email {}: {err}", email.id),
+                )
+                .await;
+            }
         }
     }
-    // Record the checkpoint only once the scan has finished so the invoice UI's
-    // "last checked" indicator reflects a completed poll, whether triggered
-    // manually or by the daily scheduler.
-    let now = chrono::Utc::now().to_rfc3339();
-    settings::set_string(&st.pool, settings::GMAIL_LAST_POLL, &now)
-        .await
-        .map_err(|e| e.to_string())?;
     Ok(total)
 }
 

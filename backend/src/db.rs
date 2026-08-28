@@ -300,6 +300,16 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
     created_at     TEXT NOT NULL
 );
+
+-- Application event log for troubleshooting: unattended background failures and
+-- other error/warning events, surfaced on the admin Logs page.
+CREATE TABLE IF NOT EXISTS app_logs (
+    id         TEXT PRIMARY KEY,
+    level      TEXT NOT NULL DEFAULT 'error',
+    source     TEXT NOT NULL DEFAULT '',
+    message    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 "#;
 
 // Created after migrations so indexes never reference a column an older
@@ -316,6 +326,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_tenant ON messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_providers_property ON providers(property_id);
 CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status);
 CREATE INDEX IF NOT EXISTS idx_inbox_items_gmail ON inbox_items(gmail_id);
+CREATE INDEX IF NOT EXISTS idx_app_logs_created ON app_logs(created_at);
 "#;
 
 pub async fn init_pool(db_path: &str) -> Result<SqlitePool, sqlx::Error> {

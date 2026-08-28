@@ -73,6 +73,15 @@ async fn send_tenant_reminders(st: &AppState) -> Result<(), sqlx::Error> {
             Ok(()) => ("sent", None, Some(now)),
             Err(e) => ("failed", Some(e), None),
         };
+        if let Some(err) = &error {
+            crate::logs::record(
+                &st.pool,
+                crate::logs::WARNING,
+                "sms",
+                &format!("tenant reminder to {} failed: {err}", p.to_phone),
+            )
+            .await;
+        }
         crate::db::execute(
             &st.pool,
             sqlx::query("UPDATE messages SET status = ?, error = ?, sent_at = ? WHERE id = ?")
@@ -134,7 +143,13 @@ async fn contact_reminders(st: &AppState) -> Result<(), sqlx::Error> {
         let message = crate::templates::render(template, &[("alert", alert)]);
         for phone in &phones {
             if let Err(e) = sms::send(phone, &message).await {
-                tracing::error!("contact reminder to {phone} failed: {e}");
+                crate::logs::record(
+                    &st.pool,
+                    crate::logs::WARNING,
+                    "sms",
+                    &format!("contact reminder to {phone} failed: {e}"),
+                )
+                .await;
             }
         }
     }

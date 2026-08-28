@@ -325,6 +325,17 @@ export interface Notification {
   created_at: string;
 }
 
+/// An application event log entry, shown on the admin Logs page.
+export type LogLevel = "error" | "warning" | "info";
+
+export interface LogEntry {
+  id: string;
+  level: LogLevel;
+  source: string;
+  message: string;
+  created_at: string;
+}
+
 /// A text message sent (or attempted) to a tenant.
 export type MessageStatus = "queued" | "sent" | "failed";
 
@@ -538,6 +549,9 @@ export const api = {
   notifications: () => request<Notification[]>("/notifications"),
   dismissNotification: (id: string) =>
     request<void>(`/notifications/${id}/dismiss`, { method: "POST" }),
+
+  logs: () => request<LogEntry[]>("/admin/logs"),
+  clearLogs: () => request<void>("/admin/logs", { method: "DELETE" }),
 
   getSettings: () => request<Settings>("/settings"),
   updateSettings: (input: Partial<Settings>) =>

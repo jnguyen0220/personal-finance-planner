@@ -3,6 +3,7 @@ pub mod categories;
 pub mod inbox;
 pub mod insurance;
 pub mod leases;
+pub mod logs;
 pub mod messages;
 pub mod notifications;
 pub mod options;

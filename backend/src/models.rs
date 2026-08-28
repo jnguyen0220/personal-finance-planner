@@ -246,6 +246,16 @@ pub struct Notification {
     pub created_at: String,
 }
 
+/// An application event log entry, shown on the admin Logs page for troubleshooting.
+#[derive(Serialize, FromRow)]
+pub struct LogEntry {
+    pub id: String,
+    pub level: String,
+    pub source: String,
+    pub message: String,
+    pub created_at: String,
+}
+
 /// A text message sent (or attempted) to a tenant, with its delivery status.
 #[derive(Serialize, FromRow)]
 pub struct Message {

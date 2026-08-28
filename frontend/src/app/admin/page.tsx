@@ -10,6 +10,7 @@ import { Broadcast } from "@/features/messages/Broadcast";
 import { CategoriesAdmin } from "@/features/admin/CategoriesAdmin";
 import { OptionListsAdmin } from "@/features/admin/OptionListsAdmin";
 import { StatesList } from "@/features/admin/StatesList";
+import { LogsAdmin } from "@/features/admin/LogsAdmin";
 
 const TABS = [
   { id: "general", label: "General" },
@@ -17,6 +18,7 @@ const TABS = [
   { id: "categories", label: "Categories" },
   { id: "dropdowns", label: "Dropdowns" },
   { id: "states", label: "States" },
+  { id: "logs", label: "Logs" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -388,6 +390,8 @@ export default function AdminPage() {
       {tab === "dropdowns" && <OptionListsAdmin />}
 
       {tab === "states" && <StatesList />}
+
+      {tab === "logs" && <LogsAdmin />}
     </main>
   );
 }
